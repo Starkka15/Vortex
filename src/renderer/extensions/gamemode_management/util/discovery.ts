@@ -494,10 +494,20 @@ function verifyToolDir(tool: ITool, testPath: string): Bluebird<void> {
     // our fs overload would try to acquire access to the directory if it's locked, which
     // is not something we want at this point because we don't even know yet if the user
     // wants to manage the game at all.
-    (fileName: string) =>
-      fsExtra.stat(path.join(testPath, fileName)).catch((err) => {
+    (fileName: string) => {
+      // Normalize backslashes on Linux
+      const normalizedFile = process.platform === "linux"
+        ? fileName.replace(/\\/g, "/")
+        : fileName;
+      return fsExtra.stat(path.join(testPath, normalizedFile)).catch((err: any) => {
+        if (err.code === "ENOENT" && process.platform === "linux") {
+          return Bluebird.resolve(
+            fs.resolveCaseInsensitive(path.join(testPath, normalizedFile)),
+          ).then((resolved) => fsExtra.stat(resolved));
+        }
         return Bluebird.reject(err);
-      }),
+      });
+    },
   ).then(() => undefined);
 }
 

@@ -495,6 +495,9 @@ catalogs:
     loot:
       specifier: git+https://github.com/Nexus-Mods/node-loot#c4f6d3dbae7bc2e19b8cb2d4cd387fffd90c87ec
       version: 6.1.2
+    lru-cache:
+      specifier: ^10.4.3
+      version: 10.4.3
     markdown-ast:
       specifier: ^0.2.1
       version: 0.2.1
@@ -3370,6 +3373,9 @@ importers:
       lodash:
         specifier: 'catalog:'
         version: 4.17.23
+      lru-cache:
+        specifier: 'catalog:'
+        version: 10.4.3
       memoize-one:
         specifier: 'catalog:'
         version: 5.2.1

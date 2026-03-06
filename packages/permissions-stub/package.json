@@ -1,0 +1,6 @@
+{
+  "name": "permissions",
+  "version": "1.0.0",
+  "description": "Linux stub for permissions (file permission management)",
+  "main": "index.js"
+}

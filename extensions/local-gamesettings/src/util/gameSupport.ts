@@ -1,3 +1,4 @@
+import * as fs from "fs";
 import * as path from "path";
 import * as Redux from "redux";
 import { selectors, types, util } from "vortex-api";
@@ -146,12 +147,60 @@ export function gameSupported(gameMode: string): boolean {
   return gameSupport.has(gameMode);
 }
 
-export function mygamesPath(gameMode: string): string {
-  return path.join(
-    util.getVortexPath("documents"),
-    "My Games",
-    gameSupport.get(gameMode, "mygamesPath"),
+function getProtonDocuments(gamePath: string): string | undefined {
+  if (process.platform !== "linux" || !gamePath) return undefined;
+  const parts = gamePath.split(path.sep);
+  const commonIdx = parts.findIndex(
+    (p, i) =>
+      p.toLowerCase() === "common" &&
+      i > 0 &&
+      parts[i - 1].toLowerCase() === "steamapps",
   );
+  if (commonIdx === -1) return undefined;
+  const steamAppsPath = parts.slice(0, commonIdx).join(path.sep);
+  const gameFolder = parts[commonIdx + 1];
+  if (!gameFolder) return undefined;
+  try {
+    const manifests = fs
+      .readdirSync(steamAppsPath)
+      .filter((f) => f.startsWith("appmanifest_") && f.endsWith(".acf"));
+    for (const manifest of manifests) {
+      const content = fs.readFileSync(
+        path.join(steamAppsPath, manifest),
+        "utf8",
+      );
+      const installdirMatch = content.match(/"installdir"\s+"([^"]+)"/);
+      const appidMatch = content.match(/"appid"\s+"([^"]+)"/);
+      if (
+        installdirMatch &&
+        appidMatch &&
+        installdirMatch[1].toLowerCase() === gameFolder.toLowerCase()
+      ) {
+        const docsPath = path.join(
+          steamAppsPath, "compatdata", appidMatch[1],
+          "pfx", "drive_c", "users", "steamuser", "Documents", "My Games",
+        );
+        if (fs.existsSync(docsPath)) return docsPath;
+      }
+    }
+  } catch (e) {
+    // fall through
+  }
+  return undefined;
+}
+
+export function mygamesPath(gameMode: string): string {
+  let myGamesBase = path.join(util.getVortexPath("documents"), "My Games");
+
+  if (process.platform === "linux") {
+    const discovery = discoveryForGame(gameMode);
+    const protonDocs = getProtonDocuments(discovery?.path);
+    if (protonDocs !== undefined) {
+      myGamesBase = protonDocs;
+    }
+  }
+
+  return path.join(myGamesBase, gameSupport.get(gameMode, "mygamesPath"));
 }
 
 export function gameSettingsFiles(

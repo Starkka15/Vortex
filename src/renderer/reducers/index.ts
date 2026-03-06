@@ -23,7 +23,7 @@ import { tableReducer } from "./tables";
 import { userReducer } from "./user";
 import { windowReducer } from "./window";
 
-import { app } from "electron";
+import * as os from "os";
 import update from "immutability-helper";
 import { pick } from "lodash";
 import * as path from "path";
@@ -215,7 +215,7 @@ function hydrateRed(
       }
       const decision = querySanitize(errors);
       if (decision === Decision.SANITIZE) {
-        const backupPath = path.join(app.getPath("temp"), STATE_BACKUP_PATH);
+        const backupPath = path.join(os.tmpdir(), STATE_BACKUP_PATH);
         log("info", "sanitizing application state");
         let backupData;
         if (backupTime !== undefined) {
@@ -235,7 +235,7 @@ function hydrateRed(
         );
         payload = setSafe(payload, pathArray, sanitized);
       } else if (decision === Decision.QUIT) {
-        app.exit();
+        window.close();
         throw new UserCanceled();
       } // in case of ignore we just continue with the original payload
     }

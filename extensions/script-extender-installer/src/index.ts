@@ -16,10 +16,7 @@ import supportData from "./gameSupport";
 import { testSupported, installScriptExtender } from "./installer";
 import { IGameSupport } from "./types";
 
-import * as nexusModsDownloader from "./nexusModsDownloader";
-const nxmDownloader: typeof nexusModsDownloader = util.lazyRequire(() =>
-  require("./nexusModsDownloader"),
-);
+import * as nxmDownloader from "./nexusModsDownloader";
 
 async function onCheckModVersion(
   api: types.IExtensionApi,

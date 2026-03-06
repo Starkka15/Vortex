@@ -210,17 +210,19 @@ async function checkNetInstall(
   api: IExtensionApi,
   dotnetVersion: number,
 ): Promise<ITestResult> {
+  // On Linux, the FOMOD installer is compiled as a native Node module
+  // (modinstaller.node), so no .NET runtime is needed.
+  if (process.platform === "linux") {
+    onDotNetSuccess();
+    return undefined!;
+  }
+
   let probeExecutable: string | null = null;
 
   if (process.platform === "win32") {
     probeExecutable = path.join(
       getVortexPath("assets_unpacked"),
       "dotnetprobe.exe",
-    );
-  } else if (process.platform === "linux") {
-    probeExecutable = path.join(
-      getVortexPath("assets_unpacked"),
-      "dotnetprobe",
     );
   } else {
     const error = new Error(
@@ -248,22 +250,6 @@ async function checkNetInstall(
     // .NET is already installed
     onDotNetSuccess();
     return undefined!;
-  }
-
-  if (process.platform === "linux") {
-    return {
-      description: {
-        short: `Microsoft .NET Desktop Runtime ${dotnetVersion} required`,
-        long:
-          `Vortex requires .NET Desktop Runtime ${dotnetVersion} to be installed to run FOMOD mod installers.` +
-          "[br][/br][br][/br]" +
-          `If you already have .NET Desktop Runtime ${dotnetVersion} installed then there may be a problem with your installation and a reinstall might be needed.` +
-          "[br][/br][br][/br]" +
-          '[spoiler label="Show detailed error"]{{stderr}}[/spoiler]',
-        replace: { stderr: stderr.replace(/\n/g, "[br][/br]") },
-      },
-      severity: "fatal",
-    };
   }
 
   const result: ITestResult = {

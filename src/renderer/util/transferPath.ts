@@ -44,10 +44,6 @@ export function testPathTransfer(
   source: string,
   destination: string,
 ): PromiseBB<void> {
-  if (process.platform !== "win32") {
-    return PromiseBB.reject(new UnsupportedOperatingSystem());
-  }
-
   let destinationRoot: string;
   try {
     destinationRoot = winapi.GetVolumePathName(destination);

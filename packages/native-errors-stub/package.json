@@ -1,0 +1,6 @@
+{
+  "name": "native-errors",
+  "version": "1.0.0",
+  "description": "Linux stub for native-errors (Windows-only native error hook)",
+  "main": "index.js"
+}

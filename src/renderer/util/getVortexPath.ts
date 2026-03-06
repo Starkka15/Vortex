@@ -152,7 +152,9 @@ function getPackagePath(unpacked: boolean): string {
 const localAppData = (() => {
   let cached: string | undefined;
   return () => {
-    if (cached === undefined) {
+    // On Linux, don't cache — LOCALAPPDATA changes when switching between
+    // Proton games (each has a different prefix path)
+    if (process.platform === "linux" || cached === undefined) {
       cached =
         process.env.LOCALAPPDATA ||
         path.resolve(getAppPath("appData"), "..", "Local");
@@ -195,6 +197,11 @@ function getVortexPath(id: AppPath): string {
 
   // 2. Renderer process: use ApplicationData cache (populated by ApplicationData.init())
   if (!isMainProcess && typeof window !== "undefined") {
+    // On Linux, localAppData depends on LOCALAPPDATA env var which changes
+    // per-game (Proton prefix). Don't use the stale IPC-cached value.
+    if (process.platform === "linux" && id === "localAppData" && process.env.LOCALAPPDATA) {
+      return process.env.LOCALAPPDATA;
+    }
     const vortexPaths = ApplicationData.vortexPaths;
     if (vortexPaths !== undefined) {
       // Check cache first (for setVortexPath overrides)

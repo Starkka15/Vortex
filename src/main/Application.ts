@@ -41,6 +41,7 @@ import LevelPersist, { DatabaseLocked } from "./store/LevelPersist";
 import {
   initMainPersistence,
   readPersistedValue,
+  writePersistedValue,
   registerHive,
   finalizeMainWrite,
 } from "./store/mainPersistence";
@@ -104,7 +105,11 @@ class Application {
       ].includes(err.message) ||
       ["ETIMEDOUT", "ECONNRESET", "EPIPE"].includes(code)
     ) {
-      log("warn", "network error unhandled", err.stack);
+      // Don't log EPIPE - it can cause an infinite loop when the console
+      // transport itself has a broken pipe (logging EPIPE triggers another EPIPE)
+      if (code !== "EPIPE") {
+        log("warn", "network error unhandled", err.stack);
+      }
       return true;
     }
 
@@ -899,6 +904,8 @@ class Application {
           instanceId: newId,
         });
         this.mAppMetadata.instanceId = newId;
+        // Persist immediately so subsequent launches reuse the same id
+        await writePersistedValue("app", ["instanceId"], newId);
       } else {
         log("debug", "startup instance", { instanceId });
         this.mAppMetadata.instanceId = instanceId;

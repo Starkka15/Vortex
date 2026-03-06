@@ -151,7 +151,7 @@ const cachedAppPath = (id: string) => {
 const localAppData = (() => {
   let cached;
   return () => {
-    if (cached === undefined) {
+    if (process.platform === "linux" || cached === undefined) {
       cached =
         process.env.LOCALAPPDATA ||
         path.resolve(cachedAppPath("appData"), "..", "Local");

@@ -1,0 +1,6 @@
+{
+  "name": "winapi-bindings",
+  "version": "1.0.0",
+  "description": "Linux stub for winapi-bindings - provides no-op/Linux implementations",
+  "main": "index.js"
+}

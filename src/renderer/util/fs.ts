@@ -536,6 +536,10 @@ export function genFSWrapperAsync<T extends (...args) => any>(func: T) {
     );
 
   const res = (...args) => {
+    // On Linux, normalize Windows backslash paths to forward slashes
+    if (process.platform === "linux" && args.length > 0 && typeof args[0] === "string") {
+      args[0] = args[0].replace(/\\/g, "/");
+    }
     return wrapper(new Error(), NUM_RETRIES, ...args);
   };
   return res;
@@ -546,9 +550,18 @@ const chmodAsync: (path: string, mode: string | number) => PromiseBB<void> =
   genFSWrapperAsync(fs.chmod);
 const closeAsync: (fd: number) => PromiseBB<void> = genFSWrapperAsync(fs.close);
 const fsyncAsync: (fd: number) => PromiseBB<void> = genFSWrapperAsync(fs.fsync);
-const lstatAsync: (path: string) => PromiseBB<fs.Stats> = genFSWrapperAsync(
+const lstatAsyncRaw: (path: string) => PromiseBB<fs.Stats> = genFSWrapperAsync(
   fs.lstat,
 );
+const lstatAsync: (path: string) => PromiseBB<fs.Stats> = (filePath: string) => {
+  return lstatAsyncRaw(filePath).catch((err: any) => {
+    if (err.code === "ENOENT" && process.platform === "linux") {
+      return PromiseBB.resolve(resolveCaseInsensitive(filePath))
+        .then((resolved) => lstatAsyncRaw(resolved));
+    }
+    return PromiseBB.reject(err);
+  });
+};
 const mkdirAsync: (path: string) => PromiseBB<void> = genFSWrapperAsync(
   fs.mkdir,
 );
@@ -565,15 +578,43 @@ const openAsync: (
   flags: string | number,
   mode?: number,
 ) => PromiseBB<number> = genFSWrapperAsync(fs.open);
-const readdirAsync: (path: string) => PromiseBB<string[]> = genFSWrapperAsync(
+const readdirAsyncRaw: (path: string) => PromiseBB<string[]> = genFSWrapperAsync(
   fs.readdir,
 );
-const readFileAsync: (...args: any[]) => PromiseBB<any> = genFSWrapperAsync(
+const readdirAsync: (path: string) => PromiseBB<string[]> = (dirPath: string) => {
+  return readdirAsyncRaw(dirPath).catch((err: any) => {
+    if (err.code === "ENOENT" && process.platform === "linux") {
+      return PromiseBB.resolve(resolveCaseInsensitive(dirPath))
+        .then((resolved) => readdirAsyncRaw(resolved));
+    }
+    return PromiseBB.reject(err);
+  });
+};
+const readFileAsyncRaw: (...args: any[]) => PromiseBB<any> = genFSWrapperAsync(
   fs.readFile,
 );
-const statAsync: (path: string) => PromiseBB<fs.Stats> = genFSWrapperAsync(
+const readFileAsync: (...args: any[]) => PromiseBB<any> = (...args: any[]) => {
+  return readFileAsyncRaw(...args).catch((err: any) => {
+    if (err.code === "ENOENT" && process.platform === "linux"
+        && args.length > 0 && typeof args[0] === "string") {
+      return PromiseBB.resolve(resolveCaseInsensitive(args[0]))
+        .then((resolved) => readFileAsyncRaw(resolved, ...args.slice(1)));
+    }
+    return PromiseBB.reject(err);
+  });
+};
+const statAsyncRaw: (path: string) => PromiseBB<fs.Stats> = genFSWrapperAsync(
   fs.stat,
 );
+const statAsync: (path: string) => PromiseBB<fs.Stats> = (filePath: string) => {
+  return statAsyncRaw(filePath).catch((err: any) => {
+    if (err.code === "ENOENT" && process.platform === "linux") {
+      return PromiseBB.resolve(resolveCaseInsensitive(filePath))
+        .then((resolved) => statAsyncRaw(resolved));
+    }
+    return PromiseBB.reject(err);
+  });
+};
 const statSilentAsync: (path: string) => PromiseBB<fs.Stats> = (
   statPath: string,
 ) => PromiseBB.resolve(fs.stat(statPath));
@@ -631,6 +672,56 @@ export {
   writeAsync,
   writeFileAsync,
 };
+
+/**
+ * Resolve a file path case-insensitively on Linux.
+ * Walks each path component and finds a case-insensitive match via readdir.
+ * Returns the resolved real path, or rejects with ENOENT if no match.
+ */
+export async function resolveCaseInsensitive(filePath: string): Promise<string> {
+  if (process.platform === "win32") {
+    return filePath;
+  }
+  // Normalize Windows backslashes to forward slashes
+  filePath = filePath.replace(/\\/g, "/");
+  const segments = filePath.split(path.sep).filter(Boolean);
+  let resolved = filePath.startsWith(path.sep) ? path.sep : "";
+  for (const seg of segments) {
+    const candidate = path.join(resolved, seg);
+    try {
+      await fs.stat(candidate);
+      resolved = candidate;
+    } catch {
+      try {
+        const entries = await fs.readdir(resolved);
+        const match = entries.find(
+          (e: string) => e.toLowerCase() === seg.toLowerCase(),
+        );
+        if (match) {
+          resolved = path.join(resolved, match);
+        } else {
+          const err: any = new Error(
+            `ENOENT: no such file or directory, stat '${filePath}'`,
+          );
+          err.code = "ENOENT";
+          err.path = filePath;
+          throw err;
+        }
+      } catch (e: any) {
+        if (e.code === "ENOENT") {
+          throw e;
+        }
+        const err: any = new Error(
+          `ENOENT: no such file or directory, stat '${filePath}'`,
+        );
+        err.code = "ENOENT";
+        err.path = filePath;
+        throw err;
+      }
+    }
+  }
+  return resolved;
+}
 
 export function isDirectoryAsync(dirPath: string): PromiseBB<boolean> {
   return PromiseBB.resolve(fs.stat(dirPath)).then((stats) =>

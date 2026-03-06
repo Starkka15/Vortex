@@ -52,6 +52,7 @@ import { setModType } from "../mod_management/actions/mods";
 import { nexusGames } from "../nexus_integration/util";
 import { setNextProfile } from "../profile_management/actions/settings";
 import { setGameInfo } from "./actions/persistent";
+import { setGameParameters } from "./actions/settings";
 import {
   addDiscoveredGame,
   clearDiscoveredGame,
@@ -78,6 +79,8 @@ import {
 } from "./util/modTypeExtensions";
 import ProcessMonitor from "./util/ProcessMonitor";
 import queryGameInfo from "./util/queryGameInfo";
+import { findLinuxSteamPath } from "../../util/linux/steamPaths";
+import { getWinePrefixPath } from "../../util/linux/proton";
 import { } from "./views/GamePicker";
 import HideGameIcon from "./views/HideGameIcon";
 import ModTypeWidget from "./views/ModTypeWidget";
@@ -86,6 +89,76 @@ import ProgressFooter from "./views/ProgressFooter";
 import RecentlyManagedDashlet from "./views/RecentlyManagedDashlet";
 
 const gameStoreLaunchers: IGameStore[] = [];
+
+/**
+ * On Linux, set up Windows environment variables (LOCALAPPDATA, APPDATA, etc.)
+ * to point to the active game's Proton/Wine prefix so extensions that reference
+ * these variables resolve to the correct paths.
+ */
+function setupProtonEnvVars(
+  store: Redux.Store<IState>,
+  gameMode: string,
+): void {
+  if (process.platform !== "linux") {
+    return;
+  }
+  const state = store.getState();
+  const discovery = state.settings.gameMode.discovered?.[gameMode];
+  if (discovery?.path === undefined) {
+    return;
+  }
+
+  // Find the Steam app ID from the game's details
+  const game = getGame(gameMode);
+  const steamAppId = game?.details?.steamAppId?.toString();
+  if (!steamAppId) {
+    return;
+  }
+
+  // Determine which steamapps directory this game lives in by walking up from discovery path
+  // e.g. /mnt/hdd-raid/SteamLibrary/steamapps/common/GameName → /mnt/hdd-raid/SteamLibrary/steamapps
+  let steamAppsPath: string | undefined;
+  const parts = discovery.path.split(path.sep);
+  const commonIdx = parts.findIndex(
+    (p) => p.toLowerCase() === "steamapps",
+  );
+  if (commonIdx >= 0) {
+    steamAppsPath = parts.slice(0, commonIdx + 1).join(path.sep);
+  }
+
+  if (!steamAppsPath) {
+    return;
+  }
+
+  const compatDataPath = path.join(steamAppsPath, "compatdata", steamAppId);
+  const prefixPath = getWinePrefixPath(compatDataPath);
+  const driveC = path.join(prefixPath, "drive_c");
+  const userDir = path.join(driveC, "users", "steamuser");
+
+  // Set Windows-equivalent environment variables to Proton prefix paths
+  process.env.LOCALAPPDATA = path.join(userDir, "AppData", "Local");
+  process.env.APPDATA = path.join(userDir, "AppData", "Roaming");
+  process.env.USERPROFILE = userDir;
+  process.env.PUBLIC = path.join(driveC, "users", "Public");
+  process.env.ProgramData = path.join(driveC, "ProgramData");
+  process.env["ProgramFiles"] = path.join(driveC, "Program Files");
+  process.env["ProgramFiles(x86)"] = path.join(driveC, "Program Files (x86)");
+  process.env.DOCUMENTS = path.join(userDir, "Documents");
+  // Also set HOME-based fallback used by some extensions
+  process.env.winedir = driveC;
+
+  log("info", "Proton env vars set for game", {
+    gameMode,
+    steamAppId,
+    LOCALAPPDATA: process.env.LOCALAPPDATA,
+    APPDATA: process.env.APPDATA,
+  });
+
+  // Bust the modPathsForGame reselect cache by touching the discovery state.
+  // The selector depends on state.settings.gameMode.discovered — updating it
+  // forces re-evaluation with the new env vars.
+  store.dispatch(setGameParameters(gameMode, { _protonEnvTs: Date.now() }));
+}
 
 const $ = local<{
   gameModeManager: GameModeManager;
@@ -216,7 +289,7 @@ function refreshGameInfo(
 
 function verifyGamePath(game: IGame, gamePath: string): PromiseBB<void> {
   return PromiseBB.map(game.requiredFiles || [], (file) =>
-    PromiseBB.resolve(fsExtra.stat(path.join(gamePath, file))),
+    fs.statAsync(path.join(gamePath, file)),
   )
     .then(() => undefined)
     .catch((err) => {
@@ -507,7 +580,7 @@ function removeDisappearedGames(
       return PromiseBB.resolve();
     }
     return PromiseBB.map(requiredFiles, (file) =>
-      fsExtra.stat(path.join(discovered[gameId].path, file)),
+      fs.statAsync(path.join(discovered[gameId].path, file)),
     )
       .then(() => undefined)
       .catch((err) => {
@@ -525,8 +598,7 @@ function removeDisappearedGames(
     ),
     (gameId) => {
       const stored = known.find((iter) => iter.id === gameId);
-      return fsExtra
-        .stat(discovered[gameId].path)
+      return fs.statAsync(discovered[gameId].path)
         .then(() => assertRequiredFiles(stored?.requiredFiles, gameId))
         .catch((err) => {
           const code = getErrorCode(err);
@@ -972,6 +1044,15 @@ function init(context: IExtensionContext): boolean {
     const store: Redux.Store<IState> = context.api.store;
     const events = context.api.events;
 
+    // On Linux, set up Proton env vars early (before migrations run)
+    // using the last active game
+    if (process.platform === "linux") {
+      const currentGameId = activeGameId(store.getState());
+      if (currentGameId) {
+        setupProtonEnvVars(store, currentGameId);
+      }
+    }
+
     const GameModeManagerImpl: typeof GameModeManager =
       require("./GameModeManager").default;
 
@@ -985,6 +1066,7 @@ function init(context: IExtensionContext): boolean {
       gameStoreLaunchers,
       (gameMode: string) => {
         log("debug", "gamemode activated", gameMode);
+        setupProtonEnvVars(store, gameMode);
         events.emit("gamemode-activated", gameMode);
       },
     );

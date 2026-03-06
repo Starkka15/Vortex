@@ -9,7 +9,47 @@ import type { IDiscoveryResult } from "../types/IDiscoveryResult";
 
 import { getModTypeExtensions } from "./modTypeExtensions";
 
+import * as fs from "fs";
 import * as path from "path";
+
+/**
+ * Synchronously resolve a path case-insensitively on Linux.
+ * Walks each segment and finds the actual casing on disk.
+ * If a segment doesn't exist at all, returns the original path
+ * (so mkdir will create it with the extension-specified casing).
+ */
+function resolvePathCaseSync(filePath: string): string {
+  if (!filePath || process.platform === "win32") {
+    return filePath;
+  }
+  filePath = filePath.replace(/\\/g, "/");
+  const segments = filePath.split(path.sep).filter(Boolean);
+  let resolved = filePath.startsWith(path.sep) ? path.sep : "";
+  for (const seg of segments) {
+    const candidate = path.join(resolved, seg);
+    try {
+      fs.statSync(candidate);
+      resolved = candidate;
+    } catch {
+      // Exact case doesn't exist — try case-insensitive match
+      try {
+        const entries = fs.readdirSync(resolved);
+        const match = entries.find(
+          (e: string) => e.toLowerCase() === seg.toLowerCase(),
+        );
+        if (match) {
+          resolved = path.join(resolved, match);
+        } else {
+          // Directory doesn't exist at all — use original casing for the rest
+          return path.join(resolved, ...segments.slice(segments.indexOf(seg)));
+        }
+      } catch {
+        return filePath;
+      }
+    }
+  }
+  return resolved;
+}
 
 // "decorate" IGame objects with added functionality
 const gameExHandler = {
@@ -34,10 +74,19 @@ const gameExHandler = {
         if (!path.isAbsolute(defaultPath)) {
           defaultPath = path.resolve(gamePath, defaultPath);
         }
-        return {
+        const result = {
           ...extTypes,
           "": defaultPath,
         };
+        // On Linux, resolve each mod path case-insensitively so we use
+        // the actual directory on disk (e.g. "data" instead of "Data")
+        // rather than creating a duplicate directory with different casing.
+        if (process.platform === "linux") {
+          for (const key of Object.keys(result)) {
+            result[key] = resolvePathCaseSync(result[key]);
+          }
+        }
+        return result;
       };
     } else if (key === "modTypes") {
       return getModTypeExtensions().filter((ex) => ex.isSupported(target.id));
@@ -110,5 +159,5 @@ export function getGameStores(): IGameStore[] {
 }
 
 export function getGameStore(id: string): IGameStore {
-  return $.gameModeManager.gameStores.find((store) => store.id === id);
+  return $.gameModeManager.gameStores.find((store) => store?.id === id);
 }

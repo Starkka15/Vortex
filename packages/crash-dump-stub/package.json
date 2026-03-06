@@ -1,0 +1,6 @@
+{
+  "name": "crash-dump",
+  "version": "1.0.0",
+  "description": "Linux stub for crash-dump (Windows-only crash dump handler)",
+  "main": "index.js"
+}

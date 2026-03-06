@@ -1,0 +1,6 @@
+{
+  "name": "wholocks",
+  "version": "1.0.0",
+  "description": "Linux stub for wholocks (file lock detection)",
+  "main": "index.js"
+}

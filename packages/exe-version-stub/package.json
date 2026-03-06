@@ -1,0 +1,6 @@
+{
+  "name": "exe-version",
+  "version": "1.0.0",
+  "description": "Linux stub for exe-version (Windows PE version extraction)",
+  "main": "index.js"
+}

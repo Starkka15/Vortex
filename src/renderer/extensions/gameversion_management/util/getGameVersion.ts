@@ -1,5 +1,5 @@
 import type { IGame } from "../../../types/IGame";
-import { statAsync } from "../../../util/fs";
+import { resolveCaseInsensitive } from "../../../util/fs";
 import lazyRequire from "../../../util/lazyRequire";
 import { log } from "../../../util/log";
 import type { IDiscoveryResult } from "../../gamemode_management/types/IDiscoveryResult";
@@ -48,9 +48,16 @@ export async function testExecProvider(
     // can be caused by a broken extension
     return Promise.resolve(false);
   }
-  const exePath = path.join(discovery.path, exeName);
   try {
-    await statAsync(exePath);
+    // resolveCaseInsensitive handles backslash normalization and case mismatch on Linux
+    let exePath = path.join(discovery.path, exeName);
+    if (process.platform === "linux") {
+      try {
+        exePath = await resolveCaseInsensitive(exePath);
+      } catch {
+        // fall through with original path
+      }
+    }
     const version: string = exeVersion.default(exePath);
     return version === "0.0.0" ? Promise.resolve(false) : Promise.resolve(true);
   } catch (err) {
@@ -63,11 +70,18 @@ export async function getExecGameVersion(
   game: IGame,
   discovery: IDiscoveryResult,
 ): Promise<string> {
-  const exePath = path.join(
+  let exePath = path.join(
     discovery.path,
     discovery.executable || game.executable(),
   );
   try {
+    if (process.platform === "linux") {
+      try {
+        exePath = await resolveCaseInsensitive(exePath);
+      } catch {
+        // fall through with original path
+      }
+    }
     const version: string = exeVersion.default(exePath);
     return Promise.resolve(version);
   } catch (err) {

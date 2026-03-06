@@ -1,5 +1,32 @@
 // Preload types are declared in renderer/preload.d.ts
 
+// On Linux, monkey-patch path module to convert backslashes to forward slashes.
+// Many game extensions hardcode Windows backslash paths (e.g. `r6\\cache\\modded`)
+// or even use path.win32 explicitly. We patch both path and path.win32 so that
+// ALL extensions produce Linux-compatible paths without modification.
+if (process.platform === "linux") {
+  const pathMod = require("path");
+  const patchPathModule = (mod: any) => {
+    const origJoin = mod.join;
+    const origNormalize = mod.normalize;
+    const origResolve = mod.resolve;
+    mod.join = (...args: string[]) =>
+      origJoin(...args.map((a: string) => (typeof a === "string" ? a.replace(/\\/g, "/") : a)))
+        .replace(/\\/g, "/");
+    mod.normalize = (p: string) =>
+      origNormalize(typeof p === "string" ? p.replace(/\\/g, "/") : p)
+        .replace(/\\/g, "/");
+    mod.resolve = (...args: string[]) =>
+      origResolve(...args.map((a: string) => (typeof a === "string" ? a.replace(/\\/g, "/") : a)))
+        .replace(/\\/g, "/");
+  };
+  patchPathModule(pathMod);
+  patchPathModule(pathMod.win32);
+  // Also override path.win32.sep so extensions checking it see "/"
+  pathMod.win32.sep = "/";
+  pathMod.win32.delimiter = ":";
+}
+
 if (process.env.DEBUG_REACT_RENDERS === "true") {
   const whyDidYouRender = require("@welldone-software/why-did-you-render");
   whyDidYouRender?.(require("react"), {
@@ -469,7 +496,7 @@ async function init(): Promise<ExtensionManager | null> {
   // Create store WITHOUT preloaded state - reducers will initialize with defaults
   // Then we dispatch __hydrate to merge persisted data with defaults
   store = createStore(
-    reducer(extReducers, () => Decision.QUIT, reportReducerError),
+    reducer(extReducers, () => Decision.SANITIZE, reportReducerError),
     enhancer,
   );
 
@@ -512,6 +539,63 @@ async function init(): Promise<ExtensionManager | null> {
         store.dispatch(setWarnedAdmin(metadata.warnedAdmin));
       }
     });
+  }
+
+  // On Linux, set Proton env vars BEFORE setStore() so migrations
+  // (which run inside setStore) see the correct LOCALAPPDATA/APPDATA paths.
+  if (process.platform === "linux") {
+    try {
+      const state = store.getState();
+      const profileId = state.settings?.profiles?.activeProfileId;
+      const profile = profileId
+        ? state.persistent?.profiles?.[profileId]
+        : undefined;
+      const gameId = profile?.gameId;
+      if (gameId) {
+        const discovery = state.settings?.gameMode?.discovered?.[gameId];
+        if (discovery?.path) {
+          const pathMod = require("path");
+          const parts = discovery.path.split(pathMod.sep);
+          const steamIdx = parts.findIndex(
+            (p: string) => p.toLowerCase() === "steamapps",
+          );
+          if (steamIdx >= 0) {
+            const steamAppsPath = parts.slice(0, steamIdx + 1).join(pathMod.sep);
+            // Get steamAppId from the game extension (games are registered during init())
+            const { getGame } = require("./extensions/gamemode_management/util/getGame");
+            const game = getGame(gameId);
+            const steamAppId = game?.details?.steamAppId?.toString();
+            if (steamAppId) {
+              const prefixPath = pathMod.join(
+                steamAppsPath, "compatdata", steamAppId, "pfx",
+              );
+              const driveC = pathMod.join(prefixPath, "drive_c");
+              const userDir = pathMod.join(driveC, "users", "steamuser");
+              process.env.LOCALAPPDATA = pathMod.join(userDir, "AppData", "Local");
+              process.env.APPDATA = pathMod.join(userDir, "AppData", "Roaming");
+              process.env.USERPROFILE = userDir;
+              process.env.PUBLIC = pathMod.join(driveC, "users", "Public");
+              process.env.ProgramData = pathMod.join(driveC, "ProgramData");
+              process.env["ProgramFiles"] = pathMod.join(driveC, "Program Files");
+              process.env["ProgramFiles(x86)"] = pathMod.join(
+                driveC, "Program Files (x86)",
+              );
+              process.env.DOCUMENTS = pathMod.join(userDir, "Documents");
+              process.env.winedir = driveC;
+              log("info", "Early Proton env vars set", {
+                gameId,
+                steamAppId,
+                LOCALAPPDATA: process.env.LOCALAPPDATA,
+              });
+            }
+          }
+        }
+      }
+    } catch (err) {
+      log("warn", "Failed to set early Proton env vars", {
+        error: (err as Error).message,
+      });
+    }
   }
 
   extensions.setStore(store);

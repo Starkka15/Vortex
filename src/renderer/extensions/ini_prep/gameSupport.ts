@@ -1,5 +1,6 @@
 import getVortexPath from "../../util/getVortexPath";
 
+import * as fsNative from "fs";
 import * as path from "path";
 import format from "string-template";
 import type { IDiscoveryResult } from "../gamemode_management/types/IDiscoveryResult";
@@ -206,8 +207,74 @@ const gameSupport = makeOverlayableDictionary<string, IGameSupport>(
   (gameId: string, store: string) => store,
 );
 
+/**
+ * On Linux, games running through Proton store their "My Documents" files
+ * inside the Proton prefix rather than the user's home directory.
+ * Derive the Proton prefix Documents path from the game's install path.
+ */
+function getProtonMyGames(gamePath: string): string | undefined {
+  const parts = gamePath.split(path.sep);
+  const commonIdx = parts.findIndex(
+    (p, i) =>
+      p.toLowerCase() === "common" &&
+      i > 0 &&
+      parts[i - 1].toLowerCase() === "steamapps",
+  );
+  if (commonIdx === -1) return undefined;
+
+  const steamAppsPath = parts.slice(0, commonIdx).join(path.sep);
+  const gameFolder = parts[commonIdx + 1];
+  if (!gameFolder) return undefined;
+
+  try {
+    const manifests = fsNative
+      .readdirSync(steamAppsPath)
+      .filter((f) => f.startsWith("appmanifest_") && f.endsWith(".acf"));
+
+    for (const manifest of manifests) {
+      const content = fsNative.readFileSync(
+        path.join(steamAppsPath, manifest),
+        "utf8",
+      );
+      const installdirMatch = content.match(/"installdir"\s+"([^"]+)"/);
+      const appidMatch = content.match(/"appid"\s+"([^"]+)"/);
+      if (
+        installdirMatch &&
+        appidMatch &&
+        installdirMatch[1].toLowerCase() === gameFolder.toLowerCase()
+      ) {
+        const docsPath = path.join(
+          steamAppsPath,
+          "compatdata",
+          appidMatch[1],
+          "pfx",
+          "drive_c",
+          "users",
+          "steamuser",
+          "Documents",
+          "My Games",
+        );
+        if (fsNative.existsSync(docsPath)) {
+          return docsPath;
+        }
+      }
+    }
+  } catch (e) {
+    // Fall through to default documents path
+  }
+  return undefined;
+}
+
 export function iniFiles(gameMode: string, discovery: IDiscoveryResult) {
-  const mygames = path.join(getVortexPath("documents"), "My Games");
+  let mygames = path.join(getVortexPath("documents"), "My Games");
+
+  // On Linux, check if the game runs through Proton and use the prefix's Documents
+  if (process.platform === "linux" && discovery?.path) {
+    const protonMyGames = getProtonMyGames(discovery.path);
+    if (protonMyGames !== undefined) {
+      mygames = protonMyGames;
+    }
+  }
 
   let store = discovery?.store;
 

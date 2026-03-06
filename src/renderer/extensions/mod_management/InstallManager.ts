@@ -1113,6 +1113,59 @@ class InstallManager {
           return Bluebird.resolve();
         }
       })
+      .then(() => {
+        // On Linux, archive entries with backslash paths (e.g. "r6\scripts\file.reds")
+        // get extracted as literal filenames with backslashes instead of directory trees.
+        // Fix this by moving them into proper directory structures.
+        // NOTE: Must use string concatenation (not path.join) for source paths because
+        // the path.join monkey-patch converts backslashes to forward slashes.
+        if (process.platform === "linux") {
+          const fsNode = require("fs");
+          const fixBackslashPaths = (dir: string) => {
+            let entries: string[];
+            try { entries = fsNode.readdirSync(dir); } catch { return; }
+            const bsEntries = entries.filter((e: string) => e.includes("\\"));
+            // Sort deepest first (most backslash segments) so files are moved
+            // before their parent placeholder dirs are removed
+            bsEntries.sort((a: string, b: string) =>
+              b.split("\\").length - a.split("\\").length);
+            for (const entry of bsEntries) {
+              const parts = entry.split("\\");
+              // Use concatenation to keep literal backslash in source path
+              const srcPath = dir + "/" + entry;
+              const destPath = dir + "/" + parts.join("/");
+              const destDir = dir + "/" + parts.slice(0, -1).join("/");
+              try {
+                const srcStat = fsNode.statSync(srcPath);
+                if (srcStat.isFile()) {
+                  if (parts.length > 1) {
+                    fsNode.mkdirSync(destDir, { recursive: true });
+                  }
+                  fsNode.renameSync(srcPath, destPath);
+                } else if (srcStat.isDirectory()) {
+                  // Empty placeholder dir — ensure real dir exists, remove placeholder
+                  fsNode.mkdirSync(destPath, { recursive: true });
+                  try { fsNode.rmdirSync(srcPath); } catch { /* not empty */ }
+                }
+              } catch (e) {
+                log("warn", "failed to fix backslash path", { srcPath, destPath, error: (e as any).message });
+              }
+            }
+            // Recurse into normal subdirectories
+            try { entries = fsNode.readdirSync(dir); } catch { return; }
+            for (const entry of entries) {
+              if (!entry.includes("\\")) {
+                const full = dir + "/" + entry;
+                try {
+                  if (fsNode.statSync(full).isDirectory()) { fixBackslashPaths(full); }
+                } catch { /* ignore */ }
+              }
+            }
+          };
+          fixBackslashPaths(tempPath);
+        }
+        return Bluebird.resolve();
+      })
       .then(() =>
         walk(tempPath, (iterPath, stats) => {
           if (stats.isFile()) {
@@ -3842,7 +3895,19 @@ class InstallManager {
       //   );
       // }
       // clean up any stale temp directory from a previous failed attempt
-      return fs.removeAsync(tempPath).then(() =>
+      // On Linux, use rm -rf because fs.removeAsync fails on directories with
+      // literal backslash filenames (the path.join monkey-patch breaks the paths)
+      const cleanupProm = (process.platform === "linux" && tempPath)
+        ? Bluebird.resolve().then(() => {
+            try {
+              require("child_process").execSync(
+                `rm -rf ${JSON.stringify(tempPath)}`,
+                { stdio: "ignore" },
+              );
+            } catch { /* ignore */ }
+          })
+        : fs.removeAsync(tempPath);
+      return cleanupProm.then(() =>
         zip
           .extractFull(
             archivePath,
@@ -3951,6 +4016,50 @@ class InstallManager {
         }
       })
       .then(async () => {
+        // On Linux, archive entries with backslash paths get extracted as
+        // literal filenames. Fix before walking.
+        if (process.platform === "linux") {
+          const fsNode = require("fs");
+          const fixBackslashPaths = (dir: string) => {
+            let entries: string[];
+            try { entries = fsNode.readdirSync(dir); } catch { return; }
+            const bsEntries = entries.filter((e: string) => e.includes("\\"));
+            bsEntries.sort((a: string, b: string) =>
+              b.split("\\").length - a.split("\\").length);
+            for (const entry of bsEntries) {
+              const parts = entry.split("\\");
+              const srcPath = dir + "/" + entry;
+              const destPath = dir + "/" + parts.join("/");
+              const destDir = dir + "/" + parts.slice(0, -1).join("/");
+              try {
+                const srcStat = fsNode.statSync(srcPath);
+                if (srcStat.isFile()) {
+                  if (parts.length > 1) {
+                    fsNode.mkdirSync(destDir, { recursive: true });
+                  }
+                  fsNode.renameSync(srcPath, destPath);
+                } else if (srcStat.isDirectory()) {
+                  fsNode.mkdirSync(destPath, { recursive: true });
+                  try { fsNode.rmdirSync(srcPath); } catch { /* not empty */ }
+                }
+              } catch (e) {
+                log("warn", "failed to fix backslash path", {
+                  srcPath, destPath, error: (e as any).message,
+                });
+              }
+            }
+            try { entries = fsNode.readdirSync(dir); } catch { return; }
+            for (const entry of entries) {
+              if (!entry.includes("\\")) {
+                const full = dir + "/" + entry;
+                try {
+                  if (fsNode.statSync(full).isDirectory()) { fixBackslashPaths(full); }
+                } catch { /* ignore */ }
+              }
+            }
+          };
+          fixBackslashPaths(tempPath);
+        }
         await walk(
           tempPath,
           toBluebird(async (iterPath, stats) => {
