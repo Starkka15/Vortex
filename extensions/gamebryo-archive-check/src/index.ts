@@ -127,7 +127,22 @@ async function checkForErrors(api: types.IExtensionApi, pluginsObj: any) {
     undefined,
   );
 
-  const dataFolder = discovery ? path.join(discovery, "data") : undefined;
+  let dataFolder = discovery ? path.join(discovery, "data") : undefined;
+
+  // On Linux, the folder may be "Data" (capital D) instead of "data"
+  if (dataFolder) {
+    try {
+      await fs.statAsync(dataFolder);
+    } catch {
+      const altFolder = path.join(discovery, "Data");
+      try {
+        await fs.statAsync(altFolder);
+        dataFolder = altFolder;
+      } catch {
+        // neither exists
+      }
+    }
+  }
 
   const normalize = (fileName: string) => {
     const noExt = path.basename(fileName, path.extname(fileName)).toLowerCase();
@@ -181,6 +196,12 @@ async function checkForErrors(api: types.IExtensionApi, pluginsObj: any) {
           const version = await streamArchiveVersion(
             path.join(dataFolder, archive.name),
           );
+          log("info", "archive version check", {
+            archive: archive.name,
+            detectedVersion: version,
+            expectedVersions: gameData.version,
+            pass: gameData.version.includes(version),
+          });
           if (gameData.version.includes(version)) {
             return accum;
           }
@@ -295,30 +316,14 @@ function genTestResult(
 }
 
 async function streamArchiveVersion(filePath: string): Promise<any> {
-  // Open a stream to the first 9 bytes of the file.
-  const stream = fs.createReadStream(filePath, { start: 0, end: 8 });
-
-  return (
-    new Promise((resolve, reject) => {
-      // Create a buffer to house those bytes.
-      const data = Buffer.alloc(9);
-      stream.on("data", (chunk) => {
-        // Fill the buffer.
-        data.fill(chunk);
-        // Resolve to the archive version number.
-        const versionBytes = data.slice(4, 8);
-        const version = versionBytes.reduce(
-          (accum, entry) => (accum += entry),
-          0,
-        );
-        resolve(version);
-      });
-
-      stream.on("error", () => resolve(0));
-    })
-      // Destroy the file stream.
-      .finally(() => stream.destroy())
-  );
+  const fd = await fs.openAsync(filePath, "r");
+  try {
+    const buf = Buffer.alloc(8);
+    await fs.readAsync(fd, buf, 0, 8, 0);
+    return buf.readUInt32LE(4);
+  } finally {
+    await fs.closeAsync(fd);
+  }
 }
 
 export default main;

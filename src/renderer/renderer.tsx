@@ -586,6 +586,7 @@ async function init(): Promise<ExtensionManager | null> {
                 gameId,
                 steamAppId,
                 LOCALAPPDATA: process.env.LOCALAPPDATA,
+                DOCUMENTS: process.env.DOCUMENTS,
               });
             }
           }
