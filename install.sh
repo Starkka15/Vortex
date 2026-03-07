@@ -61,7 +61,7 @@ fi
 
 # Check for native module dependencies
 MISSING_PKGS=""
-for pkg in liblz4-dev zlib1g-dev libx11-dev libxkbfile-dev python3; do
+for pkg in liblz4-dev zlib1g-dev libx11-dev libxkbfile-dev python3 python3-setuptools; do
     if ! dpkg -s "$pkg" &>/dev/null 2>&1; then
         MISSING_PKGS="$MISSING_PKGS $pkg"
     fi
