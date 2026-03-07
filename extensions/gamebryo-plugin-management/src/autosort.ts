@@ -830,6 +830,12 @@ class LootInterface {
 
     let loot: any;
 
+    if (process.platform === "linux") {
+      // LOOT uses Windows named pipes and a native Windows .node addon;
+      // it cannot work on Linux. Skip initialization silently.
+      return { game: gameMode, loot: undefined };
+    }
+
     try {
       loot = Bluebird.promisifyAll(
         await LootProm.createAsync(

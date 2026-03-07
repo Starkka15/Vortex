@@ -163,16 +163,18 @@ async function ensureStagingDirectoryImpl(
   }
 
   let partitionExists = true;
-  try {
-    winapi.GetVolumePathName(instPath);
-  } catch (err) {
-    // On Windows, error number 2 (0x2) translates to ERROR_FILE_NOT_FOUND.
-    //  the only way for this error to be reported at this point is when
-    //  the destination path is pointing towards a non-existing partition.
-    // If it's a non-existing partition, we want the reinitialization dialog
-    //  to appear so that the user can re-configure his game's staging folder.
-    if (isErrorWithSystemCode(err) && err.systemCode === 2) {
-      partitionExists = false;
+  if (process.platform !== "linux") {
+    try {
+      winapi.GetVolumePathName(instPath);
+    } catch (err) {
+      // On Windows, error number 2 (0x2) translates to ERROR_FILE_NOT_FOUND.
+      //  the only way for this error to be reported at this point is when
+      //  the destination path is pointing towards a non-existing partition.
+      // If it's a non-existing partition, we want the reinitialization dialog
+      //  to appear so that the user can re-configure his game's staging folder.
+      if (isErrorWithSystemCode(err) && err.systemCode === 2) {
+        partitionExists = false;
+      }
     }
   }
   let dirExists = false;
@@ -184,14 +186,13 @@ async function ensureStagingDirectoryImpl(
     await fs.statAsync(path.join(instPath, STAGING_DIR_TAG));
   } catch (unknownError) {
     const mods = getSafe(state, ["persistent", "mods", gameId], undefined);
-    if (partitionExists === true && dirExists === false && mods === undefined) {
+    if (partitionExists === true && dirExists === false
+        && (mods === undefined || process.platform === "linux")) {
       // If the mods state branch for this game is undefined - this must be the
       //  first time we manage this game - just create the staging path.
       //
-      // This code should never be hit because the directory is created in
-      // profile_management/index.ts as soon as we start managing the game for the
-      // first time but we probably still don't want to report an error if we have
-      // no meta information about any mods anyway
+      // On Linux, also auto-create if the directory simply doesn't exist,
+      // since there are no Windows partition issues to worry about.
       await fs.ensureDirWritableAsync(instPath, () => Bluebird.resolve());
     } else {
       const err = unknownToError(unknownError);

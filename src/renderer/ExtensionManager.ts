@@ -1,3 +1,7 @@
+// Webpack replaces __non_webpack_require__ with native require in the output bundle,
+// bypassing webpack's module system. Used for loading external extensions at runtime.
+declare const __non_webpack_require__: NodeRequire;
+
 import type { PreloadWindow } from "@vortex/shared/preload";
 import type { SpawnOptions } from "child_process";
 import type { OpenDialogOptions, SaveDialogOptions } from "electron";
@@ -2959,9 +2963,42 @@ class ExtensionManager {
     }
   }
 
+  // Webpack require.context for embedded extensions — ensures they are bundled
+  // in the production webpack build. Without this, dynamic require(id) calls
+  // resolve to webpackEmptyContext and all embedded extensions are missing.
+  private static embeddedExtensionContext: any =
+    (() => {
+      try {
+        return (require as any).context("./extensions", true, /\/index\.(ts|tsx)$/);
+      } catch {
+        // Not running under webpack (e.g. plain tsc dev build) — fall back to require()
+        return undefined;
+      }
+    })();
+
   /** Finds the default exported extension init function of a module */
   private static getExtensionInitFunc(id: string): ExtensionInit | undefined {
-    const mod: unknown = require(id);
+    let mod: unknown;
+
+    // In production webpack builds, use the pre-built context for embedded extensions
+    if (ExtensionManager.embeddedExtensionContext !== undefined && id.startsWith("./extensions/")) {
+      // Context keys are relative to ./extensions/, e.g. "./settings_interface/index.ts"
+      // but id is "./extensions/settings_interface/index", so strip the prefix
+      const contextId = "./" + id.slice("./extensions/".length);
+      const keys = ExtensionManager.embeddedExtensionContext.keys();
+      const matchingKey = keys.find((k) => k.startsWith(contextId));
+      if (matchingKey) {
+        mod = ExtensionManager.embeddedExtensionContext(matchingKey);
+      } else {
+        return undefined;
+      }
+    } else {
+      // For dynamic/bundled extensions loaded from the filesystem (absolute paths),
+      // use __non_webpack_require__ so webpack doesn't intercept the call.
+      // In non-webpack builds (tsc dev), this falls back to regular require.
+      mod = __non_webpack_require__(id);
+    }
+
     if (!mod) return undefined;
 
     if (typeof mod === "function") return mod as ExtensionInit;

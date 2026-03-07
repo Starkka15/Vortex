@@ -23,7 +23,19 @@ function copyExtension(extension, target) {
   for (const file of files) {
     const srcPath = path.join(sourceDir, file);
     const destPath = path.join(destDir, file);
-    fs.cpSync(srcPath, destPath, { recursive: true });
+    try {
+      fs.cpSync(srcPath, destPath, { recursive: true });
+    } catch (err) {
+      if (err.code === 'ERR_FS_CP_EINVAL') {
+        // src and dest resolve to the same file (e.g. symlink);
+        // copy via temp to break the identity
+        const realSrc = fs.realpathSync(srcPath);
+        if (fs.existsSync(destPath)) fs.rmSync(destPath, { force: true });
+        fs.cpSync(realSrc, destPath, { recursive: true });
+      } else {
+        throw err;
+      }
+    }
   }
 
   console.log(`Copied ${files.length} files to ${destDir}`);

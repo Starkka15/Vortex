@@ -557,7 +557,12 @@ const lstatAsync: (path: string) => PromiseBB<fs.Stats> = (filePath: string) => 
   return lstatAsyncRaw(filePath).catch((err: any) => {
     if (err.code === "ENOENT" && process.platform === "linux") {
       return PromiseBB.resolve(resolveCaseInsensitive(filePath))
-        .then((resolved) => lstatAsyncRaw(resolved));
+        .then((resolved) => {
+          if (resolved === filePath) {
+            return PromiseBB.reject(err);
+          }
+          return lstatAsyncRaw(resolved);
+        });
     }
     return PromiseBB.reject(err);
   });
@@ -585,7 +590,12 @@ const readdirAsync: (path: string) => PromiseBB<string[]> = (dirPath: string) =>
   return readdirAsyncRaw(dirPath).catch((err: any) => {
     if (err.code === "ENOENT" && process.platform === "linux") {
       return PromiseBB.resolve(resolveCaseInsensitive(dirPath))
-        .then((resolved) => readdirAsyncRaw(resolved));
+        .then((resolved) => {
+          if (resolved === dirPath) {
+            return PromiseBB.reject(err);
+          }
+          return readdirAsyncRaw(resolved);
+        });
     }
     return PromiseBB.reject(err);
   });
@@ -598,7 +608,12 @@ const readFileAsync: (...args: any[]) => PromiseBB<any> = (...args: any[]) => {
     if (err.code === "ENOENT" && process.platform === "linux"
         && args.length > 0 && typeof args[0] === "string") {
       return PromiseBB.resolve(resolveCaseInsensitive(args[0]))
-        .then((resolved) => readFileAsyncRaw(resolved, ...args.slice(1)));
+        .then((resolved) => {
+          if (resolved === args[0]) {
+            return PromiseBB.reject(err);
+          }
+          return readFileAsyncRaw(resolved, ...args.slice(1));
+        });
     }
     return PromiseBB.reject(err);
   });
@@ -610,7 +625,12 @@ const statAsync: (path: string) => PromiseBB<fs.Stats> = (filePath: string) => {
   return statAsyncRaw(filePath).catch((err: any) => {
     if (err.code === "ENOENT" && process.platform === "linux") {
       return PromiseBB.resolve(resolveCaseInsensitive(filePath))
-        .then((resolved) => statAsyncRaw(resolved));
+        .then((resolved) => {
+          if (resolved === filePath) {
+            return PromiseBB.reject(err);
+          }
+          return statAsyncRaw(resolved);
+        });
     }
     return PromiseBB.reject(err);
   });
@@ -700,16 +720,18 @@ export async function resolveCaseInsensitive(filePath: string): Promise<string> 
         if (match) {
           resolved = path.join(resolved, match);
         } else {
-          const err: any = new Error(
-            `ENOENT: no such file or directory, stat '${filePath}'`,
-          );
-          err.code = "ENOENT";
-          err.path = filePath;
-          throw err;
+          // Path doesn't exist yet (e.g. staging directory not created).
+          // Append remaining segments as-is and return.
+          const idx = segments.indexOf(seg);
+          resolved = path.join(resolved, ...segments.slice(idx));
+          return resolved;
         }
       } catch (e: any) {
         if (e.code === "ENOENT") {
-          throw e;
+          // Parent directory doesn't exist either — return path as-is
+          const idx = segments.indexOf(seg);
+          resolved = path.join(resolved, ...segments.slice(idx));
+          return resolved;
         }
         const err: any = new Error(
           `ENOENT: no such file or directory, stat '${filePath}'`,

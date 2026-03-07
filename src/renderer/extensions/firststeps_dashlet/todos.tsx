@@ -96,6 +96,9 @@ function todos(api: IExtensionApi): IToDo[] {
       text: "Downloads are on drive",
       value: (t: TFunction, props: any) => {
         try {
+          if (process.platform === "linux") {
+            return props.dlPath;
+          }
           return winapi.GetVolumePathName(props.dlPath);
         } catch (err) {
           err["dlPath"] = props.dlPath;
@@ -128,6 +131,9 @@ function todos(api: IExtensionApi): IToDo[] {
         try {
           if (props.instPath === undefined) {
             return t("<No staging folder>");
+          }
+          if (process.platform === "linux") {
+            return props.instPath;
           }
           return winapi.GetVolumePathName(props.instPath);
         } catch (err) {

@@ -3,6 +3,7 @@ import minimatch from "minimatch";
 import type { IEntry } from "turbowalk";
 import turbowalk from "turbowalk";
 import IniParser, { WinapiFormat } from "vortex-parse-ini";
+import { JsIniFormat } from "../../../util/JsIniFormat";
 import { getIniFilePath } from "../../installer_fomod_shared/utils/gameSupport";
 import type { IExtensionApi } from "../../../types/IExtensionContext";
 import { statAsync, readFileAsync } from "../../../util/fs";
@@ -39,7 +40,9 @@ export class CSharpDelegates {
 
   public constructor(api: IExtensionApi) {
     this.mApi = api;
-    this.parser = new IniParser(new WinapiFormat());
+    this.parser = new IniParser(
+      process.platform === "linux" ? new JsIniFormat() : new WinapiFormat()
+    );
   }
 
   public reportError = (title: string, message: string, details: string) => {

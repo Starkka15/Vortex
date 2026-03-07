@@ -1113,7 +1113,9 @@ class Settings extends ComponentEx<IProps, IComponentState> {
         if (stats[0].dev === stats[1].dev) {
           suggestion = path.join("{USERDATA}", "{game}", "mods");
         } else {
-          const volume = winapi.GetVolumePathName(modPaths[""]);
+          const volume = process.platform === "linux"
+            ? modPaths[""]
+            : winapi.GetVolumePathName(modPaths[""]);
           suggestion = path.join(volume, suggestInstallPathDirectory, "{game}");
         }
         this.changePath(suggestion);

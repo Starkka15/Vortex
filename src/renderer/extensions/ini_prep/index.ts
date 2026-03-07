@@ -29,6 +29,7 @@ import type { TFunction } from "i18next";
 import * as path from "path";
 import type { IniFile } from "vortex-parse-ini";
 import IniParser, { WinapiFormat } from "vortex-parse-ini";
+import { JsIniFormat } from "../../util/JsIniFormat";
 
 function ensureIniBackups(
   t: TFunction,
@@ -59,6 +60,9 @@ function ensureIniBackups(
 function genIniFormat(format: string) {
   switch (format) {
     case "winapi":
+      if (process.platform === "linux") {
+        return new JsIniFormat();
+      }
       return new WinapiFormat();
     default:
       throw new Error("unsupported ini format: " + format);
