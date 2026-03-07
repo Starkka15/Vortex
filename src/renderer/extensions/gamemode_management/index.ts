@@ -1050,6 +1050,21 @@ function init(context: IExtensionContext): boolean {
       const currentGameId = activeGameId(store.getState());
       if (currentGameId) {
         setupProtonEnvVars(store, currentGameId);
+        // Call game.executable(discoveryPath) early so extensions that
+        // initialize state as a side-effect of getExecutable() (e.g. BioShock
+        // sets BINARIES_TARGET) have those values populated before any
+        // getModPaths/getSupportedActivators calls happen.
+        const currentDiscovery = store.getState().settings.gameMode.discovered?.[currentGameId];
+        if (currentDiscovery?.path) {
+          const currentGame = getGame(currentGameId);
+          if (currentGame?.executable) {
+            try {
+              currentGame.executable(currentDiscovery.path);
+            } catch (err) {
+              // non-fatal — some games may not support this
+            }
+          }
+        }
       }
     }
 
@@ -1185,6 +1200,18 @@ function init(context: IExtensionContext): boolean {
         return PromiseBB.reject(
           new Error(`Attempt to switch to unknown game "${newGameId}"`),
         );
+      }
+
+      // Set up Proton env vars and trigger executable() early, before mod paths
+      // are resolved. Extensions like BioShock use process.env.LOCALAPPDATA in
+      // pathPattern() and initialize state in getExecutable() as a side-effect.
+      setupProtonEnvVars(store, newGameId);
+      {
+        const disc = store.getState().settings.gameMode.discovered?.[newGameId];
+        const gm = getGame(newGameId);
+        if (disc?.path && gm?.executable) {
+          try { gm.executable(disc.path); } catch (err) { /* non-fatal */ }
+        }
       }
 
       const id = context.api.sendNotification({

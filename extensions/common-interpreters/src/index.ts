@@ -2,6 +2,7 @@ import * as path from "path";
 import * as process from "process";
 import { log, types, util } from "vortex-api";
 import * as which from "which";
+import PromiseBB from "bluebird";
 
 function exeExtension(): string {
   return process.platform === "win32" ? ".exe" : "";
@@ -85,6 +86,41 @@ function init(context: types.IExtensionContext): boolean {
       };
     });
   }
+
+  // On Linux, block .exe launches with a clear message
+  if (process.platform === "linux") {
+    context.registerStartHook(
+      50,
+      "linux-exe-blocker",
+      (input: types.IRunParameters): PromiseBB<types.IRunParameters> => {
+        const ext = path.extname(input.executable).toLowerCase();
+        if (ext !== ".exe") {
+          return PromiseBB.resolve(input);
+        }
+
+        const toolName = path.basename(input.executable, ".exe");
+        log("warn", "Blocked .exe launch on Linux", {
+          executable: input.executable,
+        });
+
+        context.api.showDialog("info", "Windows Tool Not Supported", {
+          text:
+            `"${toolName}" is a Windows executable (.exe) and cannot run natively on Linux.\n\n`
+            + `This is a known limitation of the Linux port. `
+            + `Native Linux alternatives for mod tools are being investigated.\n\n`
+            + `In the meantime, you can try running this tool manually outside of Vortex `
+            + `using Wine or Proton.`,
+        }, [
+          { label: "OK" },
+        ]);
+
+        return PromiseBB.reject(
+          new (util as any).ProcessCanceled("Windows executables are not supported on Linux"),
+        );
+      },
+    );
+  }
+
   return true;
 }
 

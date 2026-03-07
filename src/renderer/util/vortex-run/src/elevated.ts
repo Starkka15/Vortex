@@ -90,6 +90,13 @@ function runElevated(
   func: (ipc: any, req: NodeRequire) => void | Promise<void> | Bluebird<void>,
   args?: any,
 ): Bluebird<any> {
+  if (process.platform === "linux") {
+    // Elevation via UAC is Windows-only. On Linux, just run the function directly.
+    return Bluebird.resolve()
+      .then(() => func(undefined, require))
+      .then(() => undefined);
+  }
+
   return new Bluebird((resolve, reject) => {
     tmp.file(
       { postfix: ".js" },

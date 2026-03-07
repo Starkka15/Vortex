@@ -27,6 +27,15 @@ if (process.platform === "linux") {
   pathMod.win32.delimiter = ":";
 }
 
+// On Linux, set fallback Windows env vars early so extensions that reference
+// LOCALAPPDATA/APPDATA don't crash before setupProtonEnvVars runs.
+// These will be overridden with game-specific Proton prefix paths later.
+if (process.platform === "linux" && !process.env.LOCALAPPDATA) {
+  const home = process.env.HOME || require("os").homedir();
+  process.env.LOCALAPPDATA = require("path").join(home, ".local", "share");
+  process.env.APPDATA = require("path").join(home, ".config");
+}
+
 if (process.env.DEBUG_REACT_RENDERS === "true") {
   const whyDidYouRender = require("@welldone-software/why-did-you-render");
   whyDidYouRender?.(require("react"), {

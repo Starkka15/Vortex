@@ -131,7 +131,9 @@ class DeploymentMethod extends LinkingDeployment {
           solution: (t) => {
             let displayPath = modPaths[typeId];
             try {
-              displayPath = winapi.GetVolumePathName(modPaths[typeId]);
+              if (process.platform !== "linux") {
+                displayPath = winapi.GetVolumePathName(modPaths[typeId]);
+              }
             } catch (err) {
               log("warn", "Failed to resolve volume path", {
                 path: modPaths[typeId],

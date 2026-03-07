@@ -9,8 +9,6 @@ import PromiseBB from "bluebird";
 import * as diskusage from "diskusage";
 import * as path from "path";
 import turbowalk from "turbowalk";
-import * as winapi from "winapi-bindings";
-
 import type { Normalize } from "./getNormalizeFunc";
 
 import { DOWNLOADS_DIR_TAG } from "../extensions/download_management/util/downloadDirectory";
@@ -45,16 +43,23 @@ export function testPathTransfer(
   destination: string,
 ): PromiseBB<void> {
   let destinationRoot: string;
-  try {
-    destinationRoot = winapi.GetVolumePathName(destination);
-  } catch (err) {
-    if (isErrorWithSystemCode(err)) {
-      if (err.systemCode === 2) {
-        return PromiseBB.reject(new NotFound(destination));
+  if (process.platform === "linux") {
+    // On Linux, use the destination path itself as the root for disk space checks.
+    // The isOnSameVolume() check below uses stat.dev which works cross-platform.
+    destinationRoot = destination;
+  } else {
+    try {
+      const winapi = require("winapi-bindings");
+      destinationRoot = winapi.GetVolumePathName(destination);
+    } catch (err) {
+      if (isErrorWithSystemCode(err)) {
+        if (err.systemCode === 2) {
+          return PromiseBB.reject(new NotFound(destination));
+        }
       }
-    }
 
-    return PromiseBB.reject(err);
+      return PromiseBB.reject(err);
+    }
   }
 
   const isOnSameVolume = (): PromiseBB<boolean> => {

@@ -59,9 +59,14 @@ const gameExHandler = {
         ex.isSupported(target.id),
       );
       const extTypes = applicableExtensions.reduce((prev, val) => {
-        const typePath = val.getPath(target);
-        if (typePath !== undefined) {
-          prev[val.typeId] = typePath;
+        try {
+          const typePath = val.getPath(target);
+          if (typePath !== undefined) {
+            prev[val.typeId] = typePath;
+          }
+        } catch (err) {
+          // Some extensions may return invalid paths (e.g. null pattern)
+          // before full initialization. Skip them rather than crashing.
         }
         return prev;
       }, {});
