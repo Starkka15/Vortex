@@ -66,7 +66,7 @@ pnpm run subprojects:out  # copies the .node file to the right place
 
 ## Contributing
 
-Fixes and contributions are welcome! If you run into issues, please open an issue and include your `vortex.log` file (found in `~/.config/@vortex/main/vortex.log`).
+Fixes and contributions are welcome! If you run into issues, please open an issue and include your `vortex.log` file (found in `~/.config/@vortex/main/vortex.log`). I'm open to having an AppImage created for it (would make modding games on SteamOS easier, but I'm running into issues of using WebPack vs TSC... TSC (running it thorugh pnpm run start) works fine... Lot of bugs when trying to create an AppImage.
 
 ## Upstream
 
