@@ -64,6 +64,11 @@ fi
 
 info "All prerequisites met"
 
+# --- Initialize submodules ---
+
+info "Initializing submodules..."
+git submodule update --init --recursive
+
 # --- Build ---
 
 info "Installing dependencies..."
