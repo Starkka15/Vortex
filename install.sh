@@ -85,7 +85,13 @@ info "Building FOMOD installer..."
 pnpm run build:fomod || warn "FOMOD build had errors (non-fatal, continuing)"
 
 info "Installing dependencies..."
-pnpm install
+# Some native modules (winapi-bindings, fomod-installer-native, loot) are
+# Windows-only and will fail to compile on Linux. Use --ignore-scripts to
+# install everything, then rebuild. Native module failures are non-fatal.
+pnpm install --ignore-scripts
+
+info "Building native modules (Windows-only modules will be skipped)..."
+pnpm rebuild 2>&1 | tee /tmp/pnpm-rebuild.log || true
 
 info "Building Vortex..."
 pnpm run build
