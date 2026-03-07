@@ -19,6 +19,11 @@ const getInstallArgs = () => {
   if (isOfflineBuild()) {
     args.push("--offline");
   }
+  if (process.platform === "linux") {
+    // winapi-bindings is a Windows-only native module that fails to compile
+    // on Linux. Skip native build scripts — the JS/TS parts still work fine.
+    args.push("--ignore-scripts");
+  }
   return args;
 };
 
