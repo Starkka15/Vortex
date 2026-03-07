@@ -61,7 +61,7 @@ fi
 
 # Check for native module dependencies
 MISSING_PKGS=""
-for pkg in liblz4-dev zlib1g-dev libx11-dev libxkbfile-dev; do
+for pkg in liblz4-dev zlib1g-dev libx11-dev libxkbfile-dev python3; do
     if ! dpkg -s "$pkg" &>/dev/null 2>&1; then
         MISSING_PKGS="$MISSING_PKGS $pkg"
     fi
@@ -81,8 +81,11 @@ git submodule update --init --recursive
 
 # --- Build ---
 
+info "Building FOMOD installer..."
+pnpm run build:fomod || warn "FOMOD build had errors (non-fatal, continuing)"
+
 info "Installing dependencies..."
-pnpm run build:fomod && pnpm install
+pnpm install
 
 info "Building Vortex..."
 pnpm run build
