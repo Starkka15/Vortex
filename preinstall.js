@@ -83,8 +83,9 @@ async function buildFomodIPC() {
     // Install dependencies
     await runCommand(pkgcli, getInstallArgs(), { cwd: fomodIPCPath });
 
-    // Build project
-    await runCommand(pkgcli, ["build", buildConfig], { cwd: fomodIPCPath });
+    // Build project — on Linux, skip dotnet C# build and only build JS/TS
+    const buildType = process.platform === "linux" ? "build-webpack" : "build";
+    await runCommand(pkgcli, [buildType, buildConfig], { cwd: fomodIPCPath });
 
     console.log("FOMOD IPC built successfully");
   } catch (err) {
@@ -140,8 +141,10 @@ async function main() {
     // Build FOMOD IPC
     await buildFomodIPC();
 
-    // Build FOMOD Native
-    await buildFomodNative();
+    // Build FOMOD Native (skip on Linux — requires C#/.NET native interop)
+    if (process.platform !== "linux") {
+      await buildFomodNative();
+    }
 
     console.log("Preinstall completed successfully");
   } catch (err) {
