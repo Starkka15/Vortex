@@ -81,6 +81,16 @@ git submodule update --init --recursive
 
 # --- Build ---
 
+# fomod-installer-native requires C#/.NET build not available on Linux.
+# Create minimal stubs so pnpm can link it and tsc can compile.
+info "Creating stubs for Windows-only native modules..."
+FOMOD_NATIVE_DIST="extensions/fomod-installer/src/ModInstaller.Native.TypeScript/dist"
+if [ ! -f "$FOMOD_NATIVE_DIST/index.d.ts" ]; then
+    mkdir -p "$FOMOD_NATIVE_DIST"
+    echo "export {};" > "$FOMOD_NATIVE_DIST/index.d.ts"
+    echo "module.exports = {};" > "$FOMOD_NATIVE_DIST/index.js"
+fi
+
 info "Building FOMOD installer..."
 pnpm run build:fomod || warn "FOMOD build had errors (non-fatal, continuing)"
 
@@ -92,17 +102,6 @@ pnpm install --ignore-scripts
 
 info "Building native modules (Windows-only modules will be skipped)..."
 pnpm rebuild 2>&1 | tee /tmp/pnpm-rebuild.log || true
-
-info "Creating stubs for Windows-only native modules..."
-# fomod-installer-native requires C#/.NET build that's not available on Linux.
-# Create minimal type stubs so tsc can compile.
-FOMOD_NATIVE_DIST="extensions/fomod-installer/src/ModInstaller.Native.TypeScript/dist"
-if [ ! -f "$FOMOD_NATIVE_DIST/index.d.ts" ]; then
-    mkdir -p "$FOMOD_NATIVE_DIST"
-    echo "export {};" > "$FOMOD_NATIVE_DIST/index.d.ts"
-    echo "module.exports = {};" > "$FOMOD_NATIVE_DIST/index.js"
-    echo '{"name":"fomod-installer-native","version":"0.0.0","main":"./index.js","types":"./index.d.ts"}' > "$FOMOD_NATIVE_DIST/package.json"
-fi
 
 info "Building Vortex..."
 pnpm run build
