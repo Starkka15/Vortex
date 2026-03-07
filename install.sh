@@ -21,6 +21,10 @@ error() { echo -e "${RED}[!]${NC} $1"; exit 1; }
 
 info "Checking prerequisites..."
 
+# Source nvm if available (might not be on PATH in all environments)
+export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+[ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh"
+
 if ! command -v git &>/dev/null; then
     error "git is not installed. Install it with: sudo apt install git"
 fi
