@@ -47,6 +47,12 @@ if ! command -v pnpm &>/dev/null; then
 fi
 info "pnpm $(pnpm -v) found"
 
+# Check for yarn (needed by fomod-installer build)
+if ! command -v yarn &>/dev/null; then
+    warn "yarn not found, installing..."
+    npm install -g yarn
+fi
+
 # Check for build essentials
 if ! dpkg -s build-essential &>/dev/null 2>&1; then
     warn "build-essential not found, installing..."
