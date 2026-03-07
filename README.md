@@ -39,30 +39,34 @@ A fork of [Nexus Mods' Vortex](https://github.com/Nexus-Mods/Vortex) mod manager
 - BioShock Remastered (Steam/Proton)
 - A Hat in Time (Steam/Proton)
 
-## Building
+## Installation
 
-### Prerequisites
-- Node.js 22.x (via [Volta](https://volta.sh/) or nvm)
-- PNPM
-- Development libraries: `liblz4-dev`, `zlib1g-dev` (for native save parser)
-
-### Setup & Run
+### Quick Install (Recommended)
 ```bash
+git clone --recurse-submodules https://github.com/Starkka15/Vortex.git
+cd Vortex
+./install.sh
+```
+
+The installer handles everything: prerequisites, dependencies, native modules, build, and desktop shortcut. Requires Ubuntu 22.04+ (or similar Debian-based distro), Node.js 22+ (via [nvm](https://github.com/nvm-sh/nvm)), and `git`.
+
+### Manual Build
+If you prefer to build manually:
+```bash
+git clone --recurse-submodules https://github.com/Starkka15/Vortex.git
+cd Vortex
 pnpm run build:fomod && pnpm install
 pnpm run build
-pnpm run assets:out
-pnpm run subprojects:out
+pnpm run build:assets
+pnpm run build:extensions
 pnpm run start
 ```
 
-### Rebuilding Native Modules
-The Gamebryo save parser needs to be compiled for Linux:
-```bash
-cd node_modules/.pnpm/gamebryo-savegame@*/node_modules/gamebryo-savegame
-npx node-gyp rebuild
-cd -
-pnpm run subprojects:out  # copies the .node file to the right place
-```
+### Prerequisites (installed automatically by `install.sh`)
+- Node.js 22+ (via [nvm](https://github.com/nvm-sh/nvm))
+- pnpm, yarn
+- build-essential, python3, python3-setuptools
+- liblz4-dev, zlib1g-dev, libx11-dev, libxkbfile-dev
 
 ## Contributing
 

@@ -85,10 +85,104 @@ git submodule update --init --recursive
 # Create minimal stubs so pnpm can link it and tsc can compile.
 info "Creating stubs for Windows-only native modules..."
 FOMOD_NATIVE_DIST="extensions/fomod-installer/src/ModInstaller.Native.TypeScript/dist"
-if [ ! -f "$FOMOD_NATIVE_DIST/index.d.ts" ]; then
-    mkdir -p "$FOMOD_NATIVE_DIST"
-    echo "export {};" > "$FOMOD_NATIVE_DIST/index.d.ts"
-    echo "module.exports = {};" > "$FOMOD_NATIVE_DIST/index.js"
+if [ ! -f "$FOMOD_NATIVE_DIST/ModInstaller.d.ts" ]; then
+    mkdir -p "$FOMOD_NATIVE_DIST/types"
+
+    # types/SupportedResult.d.ts
+    cat > "$FOMOD_NATIVE_DIST/types/SupportedResult.d.ts" <<'STUBEOF'
+export interface SupportedResult { supported: boolean; requiredFiles: string[]; }
+STUBEOF
+
+    # types/InstallResult.d.ts
+    cat > "$FOMOD_NATIVE_DIST/types/InstallResult.d.ts" <<'STUBEOF'
+export interface InstallInstruction { type: string; source: string; destination: string; section: string; key: string; value: string; data: Uint8Array; priority: string; }
+export interface InstallResult { message: string; instructions: InstallInstruction[]; }
+STUBEOF
+
+    # types/FileSystem.d.ts
+    cat > "$FOMOD_NATIVE_DIST/types/FileSystem.d.ts" <<'STUBEOF'
+export interface FileSystemConstructor { new (readFileContent: Function, readDirectoryFileList: Function, readDirectoryList: Function): FileSystem; setDefaultCallbacks(): void; }
+export interface FileSystem { setCallbacks(): void; }
+export interface IFileSystemExtension { FileSystem: FileSystemConstructor; }
+STUBEOF
+
+    # types/Logger.d.ts
+    cat > "$FOMOD_NATIVE_DIST/types/Logger.d.ts" <<'STUBEOF'
+export interface LoggerConstructor { new (log: (level: number, message: string) => void): Logger; setDefaultCallbacks(): void; }
+export interface Logger { setCallbacks(): void; disposeDefaultLogger(): void; }
+export interface ILoggerExtension { Logger: LoggerConstructor; }
+STUBEOF
+
+    # types/ModInstaller.d.ts
+    cat > "$FOMOD_NATIVE_DIST/types/ModInstaller.d.ts" <<'STUBEOF'
+import { SupportedResult, InstallResult, IHeaderImage, SelectCallback, ContinueCallback, CancelCallback, IInstallStep } from ".";
+export interface ModInstallerConstructor { new (...args: any[]): ModInstaller; testSupported(files: string[], allowedTypes: string[]): SupportedResult; }
+export interface ModInstaller { install(files: string[], stopPatterns: string[], pluginPath: string, scriptPath: string, preset: any, validate: boolean): Promise<InstallResult | null>; }
+export interface IModInstallerExtension { ModInstaller: ModInstallerConstructor; }
+STUBEOF
+
+    # types/index.d.ts
+    cat > "$FOMOD_NATIVE_DIST/types/index.d.ts" <<'STUBEOF'
+export * from './ModInstaller';
+export * from './FileSystem';
+export * from './Logger';
+export * from './SupportedResult';
+export * from './InstallResult';
+export type OrderType = 'AlphaAsc' | 'AlphaDesc' | 'Explicit';
+export type GroupType = 'SelectAtLeastOne' | 'SelectAtMostOne' | 'SelectExactlyOne' | 'SelectAll' | 'SelectAny';
+export type PluginType = 'Required' | 'Optional' | 'Recommended' | 'NotUsable' | 'CouldBeUsable';
+export interface IPlugin { id: number; selected: boolean; preset: boolean; name: string; description: string; image: string; type: PluginType; conditionMsg?: string; }
+export interface IGroup { id: number; name: string; type: GroupType; options: IPlugin[]; }
+export interface IGroupList { group: IGroup[]; order: OrderType; }
+export interface IInstallStep { id: number; name: string; visible: boolean; optionalFileGroups?: IGroupList; }
+export interface IHeaderImage { path: string; showFade: boolean; height: number; }
+export type SelectCallback = (stepId: number, groupId: number, optionId: number[]) => void;
+export type ContinueCallback = (forward: boolean, currentStepId: number) => void;
+export type CancelCallback = () => void;
+export interface IExtension { allocWithOwnership(length: number): Buffer | null; allocWithoutOwnership(length: number): Buffer | null; allocAliveCount(): number; }
+STUBEOF
+
+    # Common.d.ts
+    cat > "$FOMOD_NATIVE_DIST/Common.d.ts" <<'STUBEOF'
+export declare const allocWithOwnership: (length: number) => Uint8Array | null;
+export declare const allocWithoutOwnership: (length: number) => Uint8Array | null;
+export declare const allocAliveCount: () => number;
+STUBEOF
+
+    # Logger.d.ts
+    cat > "$FOMOD_NATIVE_DIST/Logger.d.ts" <<'STUBEOF'
+import * as types from './types';
+export declare class NativeLogger implements types.Logger { private manager; constructor(log: (level: number, message: string) => void); setCallbacks(): void; disposeDefaultLogger(): void; static setDefaultCallbacks: () => void; }
+STUBEOF
+
+    # ModInstaller.d.ts
+    cat > "$FOMOD_NATIVE_DIST/ModInstaller.d.ts" <<'STUBEOF'
+import * as types from './types';
+export declare class NativeModInstaller implements types.ModInstaller { private manager; constructor(...args: any[]); install(files: string[], stopPatterns: string[], pluginPath: string, scriptPath: string, preset: any, validate: boolean): Promise<types.InstallResult | null>; static testSupported: (files: string[], allowedTypes: string[]) => types.SupportedResult; }
+STUBEOF
+
+    # FileSystem.d.ts
+    cat > "$FOMOD_NATIVE_DIST/FileSystem.d.ts" <<'STUBEOF'
+import * as types from './types';
+export declare class NativeFileSystem implements types.FileSystem { private manager; constructor(readFileContent: Function, readDirectoryFileList: Function, readDirectoryList: Function); setCallbacks(): void; static setDefaultCallbacks: () => void; }
+STUBEOF
+
+    # index.d.ts
+    cat > "$FOMOD_NATIVE_DIST/index.d.ts" <<'STUBEOF'
+import * as types from './types';
+export * from './Common';
+export * from './Logger';
+export * from './ModInstaller';
+export * from './FileSystem';
+export { types };
+STUBEOF
+
+    # index.js — runtime stub (native addon won't work on Linux anyway)
+    cat > "$FOMOD_NATIVE_DIST/index.js" <<'STUBEOF'
+module.exports = {};
+STUBEOF
+
+    info "Created fomod-installer-native type stubs"
 fi
 
 info "Building FOMOD installer..."
@@ -100,6 +194,14 @@ info "Installing dependencies..."
 # install everything, then rebuild. Native module failures are non-fatal.
 pnpm install --ignore-scripts
 
+info "Installing Electron binary..."
+ELECTRON_INSTALL=$(find node_modules/.pnpm -path '*/electron/install.js' 2>/dev/null | head -1)
+if [ -n "$ELECTRON_INSTALL" ]; then
+    node "$ELECTRON_INSTALL"
+else
+    warn "Electron install script not found"
+fi
+
 info "Building native modules (Windows-only modules will be skipped)..."
 pnpm rebuild 2>&1 | tee /tmp/pnpm-rebuild.log || true
 
@@ -107,24 +209,27 @@ info "Building Vortex..."
 pnpm run build
 
 info "Building assets..."
-pnpm run assets:out
+pnpm run build:assets
 
-info "Building extensions..."
-pnpm run subprojects:out
-
-# --- Rebuild native modules if needed ---
+# --- Build native modules that extensions depend on ---
 
 SAVEGAME_DIR=$(find node_modules/.pnpm -path '*/gamebryo-savegame/binding.gyp' -exec dirname {} \; 2>/dev/null | head -1)
 if [ -n "$SAVEGAME_DIR" ]; then
-    SAVEGAME_NODE="$SAVEGAME_DIR/build/Release/gamebryo-savegame.node"
+    SAVEGAME_NODE="$SAVEGAME_DIR/build/Release/GamebryoSave.node"
     if [ ! -f "$SAVEGAME_NODE" ]; then
         info "Building native save parser..."
-        (cd "$SAVEGAME_DIR" && npx node-gyp rebuild)
-        pnpm run subprojects:out
+        # autogypi files are normally generated during install scripts
+        # (which we skip with --ignore-scripts). Create them if missing.
+        [ ! -f "$SAVEGAME_DIR/auto-top.gypi" ] && echo '{}' > "$SAVEGAME_DIR/auto-top.gypi"
+        [ ! -f "$SAVEGAME_DIR/auto.gypi" ] && printf '{\n\t"includes": []\n}\n' > "$SAVEGAME_DIR/auto.gypi"
+        (cd "$SAVEGAME_DIR" && npx node-gyp rebuild) || warn "Save parser build failed (non-fatal)"
     else
         info "Native save parser already built"
     fi
 fi
+
+info "Building extensions..."
+pnpm --filter "./extensions/**" --no-bail run build 2>&1 || warn "Some extensions failed to build (non-fatal, Windows-only native modules)"
 
 info "Build complete!"
 
@@ -136,6 +241,7 @@ DESKTOP_FILE="$HOME/.local/share/applications/Vortex.desktop"
 DESKTOP_LINK="$HOME/Desktop/Vortex.desktop"
 ICON_PATH="$SCRIPT_DIR/assets/images/vortex.png"
 
+mkdir -p "$HOME/.local/share/applications"
 cat > "$DESKTOP_FILE" <<EOF
 [Desktop Entry]
 Name=Vortex
