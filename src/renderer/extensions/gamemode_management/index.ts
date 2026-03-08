@@ -81,6 +81,7 @@ import ProcessMonitor from "./util/ProcessMonitor";
 import queryGameInfo from "./util/queryGameInfo";
 import { findLinuxSteamPath } from "../../util/linux/steamPaths";
 import { getWinePrefixPath } from "../../util/linux/proton";
+import { findHeroicWinePrefix, findHeroicAppIdByPath, findWinePrefixUserDir } from "../../util/linux/heroicPaths";
 import { } from "./views/GamePicker";
 import HideGameIcon from "./views/HideGameIcon";
 import ModTypeWidget from "./views/ModTypeWidget";
@@ -91,9 +92,46 @@ import RecentlyManagedDashlet from "./views/RecentlyManagedDashlet";
 const gameStoreLaunchers: IGameStore[] = [];
 
 /**
+ * Set Windows-equivalent env vars from a Wine/Proton prefix user directory.
+ */
+function applyWinePrefixEnvVars(
+  store: Redux.Store<IState>,
+  gameMode: string,
+  prefixPath: string,
+  label: string,
+): void {
+  const userDir = findWinePrefixUserDir(prefixPath);
+  if (!userDir) {
+    log("warn", "Could not find user dir in Wine prefix", { prefixPath, label });
+    return;
+  }
+
+  const driveC = path.join(prefixPath, "drive_c");
+
+  process.env.LOCALAPPDATA = path.join(userDir, "AppData", "Local");
+  process.env.APPDATA = path.join(userDir, "AppData", "Roaming");
+  process.env.USERPROFILE = userDir;
+  process.env.PUBLIC = path.join(driveC, "users", "Public");
+  process.env.ProgramData = path.join(driveC, "ProgramData");
+  process.env["ProgramFiles"] = path.join(driveC, "Program Files");
+  process.env["ProgramFiles(x86)"] = path.join(driveC, "Program Files (x86)");
+  process.env.DOCUMENTS = path.join(userDir, "Documents");
+  process.env.winedir = driveC;
+
+  log("info", `${label} env vars set for game`, {
+    gameMode,
+    LOCALAPPDATA: process.env.LOCALAPPDATA,
+    APPDATA: process.env.APPDATA,
+  });
+
+  store.dispatch(setGameParameters(gameMode, { _protonEnvTs: Date.now() }));
+}
+
+/**
  * On Linux, set up Windows environment variables (LOCALAPPDATA, APPDATA, etc.)
  * to point to the active game's Proton/Wine prefix so extensions that reference
  * these variables resolve to the correct paths.
+ * Supports both Steam (compatdata) and Heroic (per-game winePrefix).
  */
 function setupProtonEnvVars(
   store: Redux.Store<IState>,
@@ -108,15 +146,27 @@ function setupProtonEnvVars(
     return;
   }
 
-  // Find the Steam app ID from the game's details
+  // Heroic Games Launcher: get Wine prefix from Heroic's per-game config
+  if (discovery.store === "heroic") {
+    const heroicAppId = findHeroicAppIdByPath(discovery.path);
+    if (heroicAppId) {
+      const winePrefix = findHeroicWinePrefix(heroicAppId);
+      if (winePrefix) {
+        applyWinePrefixEnvVars(store, gameMode, winePrefix, "Heroic Wine prefix");
+        return;
+      }
+    }
+    log("warn", "Heroic game found but no Wine prefix configured", { gameMode });
+    return;
+  }
+
+  // Steam: derive prefix from compatdata
   const game = getGame(gameMode);
   const steamAppId = game?.details?.steamAppId?.toString();
   if (!steamAppId) {
     return;
   }
 
-  // Determine which steamapps directory this game lives in by walking up from discovery path
-  // e.g. /mnt/hdd-raid/SteamLibrary/steamapps/common/GameName → /mnt/hdd-raid/SteamLibrary/steamapps
   let steamAppsPath: string | undefined;
   const parts = discovery.path.split(path.sep);
   const commonIdx = parts.findIndex(
@@ -132,32 +182,7 @@ function setupProtonEnvVars(
 
   const compatDataPath = path.join(steamAppsPath, "compatdata", steamAppId);
   const prefixPath = getWinePrefixPath(compatDataPath);
-  const driveC = path.join(prefixPath, "drive_c");
-  const userDir = path.join(driveC, "users", "steamuser");
-
-  // Set Windows-equivalent environment variables to Proton prefix paths
-  process.env.LOCALAPPDATA = path.join(userDir, "AppData", "Local");
-  process.env.APPDATA = path.join(userDir, "AppData", "Roaming");
-  process.env.USERPROFILE = userDir;
-  process.env.PUBLIC = path.join(driveC, "users", "Public");
-  process.env.ProgramData = path.join(driveC, "ProgramData");
-  process.env["ProgramFiles"] = path.join(driveC, "Program Files");
-  process.env["ProgramFiles(x86)"] = path.join(driveC, "Program Files (x86)");
-  process.env.DOCUMENTS = path.join(userDir, "Documents");
-  // Also set HOME-based fallback used by some extensions
-  process.env.winedir = driveC;
-
-  log("info", "Proton env vars set for game", {
-    gameMode,
-    steamAppId,
-    LOCALAPPDATA: process.env.LOCALAPPDATA,
-    APPDATA: process.env.APPDATA,
-  });
-
-  // Bust the modPathsForGame reselect cache by touching the discovery state.
-  // The selector depends on state.settings.gameMode.discovered — updating it
-  // forces re-evaluation with the new env vars.
-  store.dispatch(setGameParameters(gameMode, { _protonEnvTs: Date.now() }));
+  applyWinePrefixEnvVars(store, gameMode, prefixPath, "Proton");
 }
 
 const $ = local<{

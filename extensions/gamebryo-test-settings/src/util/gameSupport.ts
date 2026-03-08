@@ -167,13 +167,24 @@ function getProtonMyGames(gamePath: string): string | undefined {
 }
 
 export function mygamesPath(gameMode: string): string {
-  const discovery = discoveryForGame(gameMode);
-  const protonMyGames = discovery?.path
-    ? getProtonMyGames(discovery.path)
-    : undefined;
+  let baseMyGames: string | undefined;
 
-  const baseMyGames = protonMyGames
-    ?? path.join(util.getVortexPath("documents"), "My Games");
+  if (process.platform === "linux") {
+    // setupProtonEnvVars sets DOCUMENTS for both Steam and Heroic games
+    if (process.env.DOCUMENTS) {
+      baseMyGames = path.join(process.env.DOCUMENTS, "My Games");
+    } else {
+      const discovery = discoveryForGame(gameMode);
+      const protonMyGames = discovery?.path
+        ? getProtonMyGames(discovery.path)
+        : undefined;
+      baseMyGames = protonMyGames;
+    }
+  }
+
+  if (!baseMyGames) {
+    baseMyGames = path.join(util.getVortexPath("documents"), "My Games");
+  }
 
   return path.join(
     baseMyGames,

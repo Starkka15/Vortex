@@ -5,6 +5,7 @@ import * as path from "path";
 import format from "string-template";
 import type { IDiscoveryResult } from "../gamemode_management/types/IDiscoveryResult";
 import { makeOverlayableDictionary } from "../../util/util";
+import { findHeroicWinePrefix, findHeroicAppIdByPath, findWinePrefixUserDir } from "../../util/linux/heroicPaths";
 
 interface IGameSupport {
   iniFiles: string[];
@@ -265,14 +266,39 @@ function getProtonMyGames(gamePath: string): string | undefined {
   return undefined;
 }
 
+/**
+ * On Linux, get the "My Games" path from a Heroic Wine prefix.
+ */
+function getHeroicMyGames(gamePath: string): string | undefined {
+  const appId = findHeroicAppIdByPath(gamePath);
+  if (!appId) return undefined;
+
+  const winePrefix = findHeroicWinePrefix(appId);
+  if (!winePrefix) return undefined;
+
+  const userDir = findWinePrefixUserDir(winePrefix);
+  if (!userDir) return undefined;
+
+  const myGames = path.join(userDir, "Documents", "My Games");
+  if (fsNative.existsSync(myGames)) {
+    return myGames;
+  }
+  return undefined;
+}
+
 export function iniFiles(gameMode: string, discovery: IDiscoveryResult) {
   let mygames = path.join(getVortexPath("documents"), "My Games");
 
-  // On Linux, check if the game runs through Proton and use the prefix's Documents
+  // On Linux, check if the game runs through Proton/Wine and use the prefix's Documents
   if (process.platform === "linux" && discovery?.path) {
-    const protonMyGames = getProtonMyGames(discovery.path);
-    if (protonMyGames !== undefined) {
-      mygames = protonMyGames;
+    let prefixMyGames: string | undefined;
+    if (discovery.store === "heroic") {
+      prefixMyGames = getHeroicMyGames(discovery.path);
+    } else {
+      prefixMyGames = getProtonMyGames(discovery.path);
+    }
+    if (prefixMyGames !== undefined) {
+      mygames = prefixMyGames;
     }
   }
 
@@ -288,9 +314,65 @@ export function iniFiles(gameMode: string, discovery: IDiscoveryResult) {
     store = "enderaloverride";
   }
 
-  return (gameSupport.get(gameMode, "iniFiles", store) ?? []).map((filePath) =>
-    format(filePath, { mygames, game: discovery.path }),
+  const files = (gameSupport.get(gameMode, "iniFiles", store) ?? []).map(
+    (filePath) => format(filePath, { mygames, game: discovery.path }),
   );
+
+  // On Linux, resolve case-insensitive filenames since Wine/Proton may create
+  // files with different casing than what game extensions expect
+  if (process.platform === "linux") {
+    return files.map(resolveCaseInsensitive);
+  }
+  return files;
+}
+
+/**
+ * On a case-sensitive filesystem, find the actual filename that matches
+ * the expected path case-insensitively. Returns the original path if no
+ * match is found (so the caller gets the expected ENOENT).
+ */
+function resolveCaseInsensitive(filePath: string): string {
+  try {
+    fsNative.statSync(filePath);
+    return filePath; // exact match exists
+  } catch {
+    // file doesn't exist with this exact case — try to find it
+  }
+
+  const dir = path.dirname(filePath);
+  const base = path.basename(filePath).toLowerCase();
+
+  try {
+    const entries = fsNative.readdirSync(dir);
+    const match = entries.find((e) => e.toLowerCase() === base);
+    if (match) {
+      return path.join(dir, match);
+    }
+  } catch {
+    // directory doesn't exist
+  }
+
+  // Also try resolving the parent directory case-insensitively
+  // (e.g. "Fallout3" dir might be "fallout3")
+  const parentDir = path.dirname(dir);
+  const dirBase = path.basename(dir).toLowerCase();
+
+  try {
+    const parentEntries = fsNative.readdirSync(parentDir);
+    const dirMatch = parentEntries.find((e) => e.toLowerCase() === dirBase);
+    if (dirMatch) {
+      const resolvedDir = path.join(parentDir, dirMatch);
+      const entries = fsNative.readdirSync(resolvedDir);
+      const fileMatch = entries.find((e) => e.toLowerCase() === base);
+      if (fileMatch) {
+        return path.join(resolvedDir, fileMatch);
+      }
+    }
+  } catch {
+    // parent doesn't exist either
+  }
+
+  return filePath;
 }
 
 export function iniFormat(gameMode: string) {
