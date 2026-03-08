@@ -1,0 +1,13 @@
+export { patchTOC } from "./TOCPatcher";
+export type { TOCEntry } from "./TOCPatcher";
+export { patchGameExe } from "./GameExePatcher";
+export { copyTFCFiles } from "./TFCCopyManager";
+export type { TFCCopyResult } from "./TFCCopyManager";
+export { applyIniPatch, patchIniFile, parsePatchFile, PatchType } from "./IniPatcher";
+export type { PatchSection, PatchKeyValue } from "./IniPatcher";
+export { updatePackageTextures, findPackageFiles } from "./TextureUpdater";
+export type { PackageUpdateResult, ProgressCallback } from "./TextureUpdater";
+export { installTextureMod } from "./Orchestrator";
+export type { InstallResult, InstallProgress } from "./Orchestrator";
+export { BackupManager, BackupSession } from "./BackupManager";
+export type { BackupInfo } from "./BackupManager";

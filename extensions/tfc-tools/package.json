@@ -1,0 +1,24 @@
+{
+  "name": "@vortex/tfc-tools",
+  "version": "0.1.0",
+  "description": "Cross-platform UPK texture patcher for Unreal Engine 3 games (replaces TFC Installer)",
+  "main": "./dist/index.js",
+  "scripts": {
+    "_build": "node build.mjs",
+    "build": "pnpm run _build && node ../copy-extension.mjs tfc-tools out",
+    "dist": "pnpm run _build && node ../copy-extension.mjs tfc-tools dist",
+    "test": "jest"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^4.3.0",
+    "lzo-ts": "^0.2.3"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.0.0",
+    "@types/node": "^22.0.0",
+    "jest": "^29.0.0",
+    "ts-jest": "^29.0.0",
+    "typescript": "^5.0.0",
+    "vortex-api": "catalog:"
+  }
+}
