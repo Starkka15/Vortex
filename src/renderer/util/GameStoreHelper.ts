@@ -168,6 +168,19 @@ class GameStoreHelper {
               });
             }
           }
+          // Heroic Games Launcher uses GOG/Epic IDs — if the native store
+          // lookup missed, also check the heroic store with the same ID.
+          if (!result && (storeId === "gog" || storeId === "epic")) {
+            try {
+              if (storeQuery.id !== undefined) {
+                result = await this.findGameEntry("id", storeQuery.id, "heroic");
+              } else if (storeQuery.name !== undefined) {
+                result = await this.findGameEntry("name", storeQuery.name, "heroic");
+              }
+            } catch {
+              // heroic store not available or game not found
+            }
+          }
           if (result) {
             result.priority =
               storeQuery.prefer ??

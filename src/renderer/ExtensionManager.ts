@@ -2995,8 +2995,11 @@ class ExtensionManager {
     } else {
       // For dynamic/bundled extensions loaded from the filesystem (absolute paths),
       // use __non_webpack_require__ so webpack doesn't intercept the call.
-      // In non-webpack builds (tsc dev), this falls back to regular require.
-      mod = __non_webpack_require__(id);
+      // In non-webpack builds (tsc dev), __non_webpack_require__ doesn't exist,
+      // so fall back to regular require.
+      mod = (typeof __non_webpack_require__ !== "undefined")
+        ? __non_webpack_require__(id)
+        : require(id);
     }
 
     if (!mod) return undefined;
