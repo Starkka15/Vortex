@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import { BinaryReader, Endianness, FGuid } from "../binary";
 import { decompress } from "../compression";
+import { ChunkManager } from "../compression/ChunkManager";
 import { CompressionFlag } from "../types";
 import { PackageId, getPackageId } from "./PackageId";
 import { PackageProfile, createPackageProfile } from "./PackageProfile";
@@ -797,6 +798,182 @@ function decompressFullyCompressed(reader: BinaryReader): BinaryReader {
   }
 
   return new BinaryReader(output, Endianness.Little);
+}
+
+// ============================================================
+//  Selective (header-only) reading for block-level patching
+// ============================================================
+
+/**
+ * Result of selective package parsing.
+ * Contains the parsed package (tables + metadata) plus a ChunkManager
+ * for lazy, selective decompression of individual chunks.
+ */
+export interface SelectiveParseResult {
+  pkg: UPKPackage;
+  chunkMgr: ChunkManager | null;
+  headerEnd: number;
+  fileBuffer: Buffer;
+  compressionFlagOffset: number;
+}
+
+/**
+ * Read a UPK package selectively — parse header and tables without
+ * fully decompressing all chunks.
+ *
+ * For compressed packages, returns a ChunkManager that can selectively
+ * decompress individual chunks on demand. For uncompressed packages,
+ * chunkMgr is null and the pkg.dataReader covers the whole file.
+ */
+export function readUPKPackageSelective(
+  filePath: string,
+  gameId?: string,
+): SelectiveParseResult {
+  const fileBuffer = fs.readFileSync(filePath);
+  const reader = new BinaryReader(fileBuffer, Endianness.Little);
+
+  // Read signature and detect endianness
+  const endianness = readSignature(reader);
+
+  // Check for FullyCompressedStorage
+  const peekPos = reader.position;
+  const peekValue = reader.readUInt32();
+  reader.seek(peekPos);
+
+  if (FULLY_COMPRESSED_BLOCK_SIZES.has(peekValue)) {
+    // FullyCompressed — must fully decompress the wrapper, then parse inner UPK
+    // Fall back to full decompression for the outer layer
+    const pkg = readUPKPackage(filePath, gameId);
+    return {
+      pkg,
+      chunkMgr: null,
+      headerEnd: 0,
+      fileBuffer,
+      compressionFlagOffset: 0,
+    };
+  }
+
+  // Read versions
+  const { fileVersion, licenseeVersion } = readVersions(reader);
+  const packageId = getPackageId(fileVersion, licenseeVersion, gameId);
+  const profile = createPackageProfile(packageId, fileVersion);
+
+  // Read summary (header) — this is always uncompressed
+  const summary = readPackageSummary(reader, profile);
+
+  if (summary.compressionFlag === CompressionFlag.None
+    || summary.compressionChunks.length === 0) {
+    // Uncompressed package — no selective decompression needed
+    const names = readNameTable(reader, summary.nameArray, profile);
+    const imports = readImportTable(reader, summary.importArray, profile);
+    const exports = readExportTable(reader, summary.exportArray, profile);
+
+    const pkg: UPKPackage = {
+      filePath, endianness, fileVersion, licenseeVersion,
+      packageId, profile, summary, names, imports, exports,
+      dataReader: reader,
+    };
+    return { pkg, chunkMgr: null, headerEnd: 0, fileBuffer, compressionFlagOffset: 0 };
+  }
+
+  // Compressed package — create ChunkManager for selective decompression
+  const headerEnd = summary.compressionChunks[0].uncompressedOffset;
+  const chunkMgr = new ChunkManager(fileBuffer, summary.compressionChunks, summary.compressionFlag);
+
+  // Find compression flag offset for later use in buildOutput
+  const compressionFlagOffset = findCompressionFlagOffsetFromReader(fileBuffer, profile, fileVersion);
+
+  // Compute table sizes using inter-table offsets (tables are contiguous:
+  // names → imports → exports → depends/serial data).
+  // Sort table offsets to determine boundaries.
+  const tableOffsets = [
+    { kind: "name" as const, offset: summary.nameArray.offset, count: summary.nameArray.count },
+    { kind: "import" as const, offset: summary.importArray.offset, count: summary.importArray.count },
+    { kind: "export" as const, offset: summary.exportArray.offset, count: summary.exportArray.count },
+  ].sort((a, b) => a.offset - b.offset);
+
+  // Use dependsOffset or headerSize as the upper bound for the last table.
+  // The depends table immediately follows the export table in UE3 packages.
+  const lastTable = tableOffsets[tableOffsets.length - 1];
+  const lastTableEnd = summary.dependsOffset
+    ?? summary.headerSize
+    ?? (lastTable.offset + lastTable.count * 256 + 4096);
+
+  // Each table's size: either bounded by the next table's offset, or by dependsOffset
+  const tableSizes = tableOffsets.map((t, i) => {
+    const nextOffset = i < tableOffsets.length - 1
+      ? tableOffsets[i + 1].offset
+      : lastTableEnd;
+    return { ...t, size: nextOffset - t.offset };
+  });
+
+  const nameEntry = tableSizes.find(t => t.kind === "name")!;
+  const importEntry = tableSizes.find(t => t.kind === "import")!;
+  const exportEntry = tableSizes.find(t => t.kind === "export")!;
+
+  const tableReader = chunkMgr.createReaderForTables(
+    nameEntry.offset, nameEntry.size,
+    importEntry.offset, importEntry.size,
+    exportEntry.offset, exportEntry.size,
+  );
+
+  // Read tables from the composite reader
+  const names = readNameTable(tableReader, summary.nameArray, profile);
+  const imports = readImportTable(tableReader, summary.importArray, profile);
+  const exports = readExportTable(tableReader, summary.exportArray, profile);
+
+  const pkg: UPKPackage = {
+    filePath, endianness, fileVersion, licenseeVersion,
+    packageId, profile, summary, names, imports, exports,
+    dataReader: tableReader, // limited reader — only covers tables
+  };
+
+  return { pkg, chunkMgr, headerEnd, fileBuffer, compressionFlagOffset };
+}
+
+/**
+ * Find the compression flag offset by parsing the header.
+ * Works on the raw file buffer (not decompressed).
+ */
+function findCompressionFlagOffsetFromReader(
+  fileBuffer: Buffer,
+  profile: PackageProfile,
+  fileVersion: number,
+): number {
+  const reader = new BinaryReader(
+    Buffer.from(fileBuffer.subarray(0, Math.min(4096, fileBuffer.length))),
+    Endianness.Little,
+  );
+
+  // signature(4) + fileVersion(2) + licenseeVersion(2)
+  reader.skip(4 + 2 + 2);
+
+  const sp = profile.summary;
+  if (sp.unknownBytesAfterLicenseeVersion > 0) reader.skip(sp.unknownBytesAfterLicenseeVersion);
+  if (sp.hasHeaderSize) reader.skip(4);
+  if (sp.hasPackageGroup) reader.readFString();
+  reader.skip(4); // packageFlags
+  reader.skip(4 * 2); // name count + offset
+  reader.skip(4 * 2); // export count + offset
+  reader.skip(4 * 2); // import count + offset
+  if (sp.hasDependsOffset) reader.skip(4);
+  if (sp.hasSerializedOffset) reader.skip(sp.hasSerializedOffset64 ? 8 : 4);
+  if (sp.unknownBytesAfterSerializedOffset > 0) reader.skip(sp.unknownBytesAfterSerializedOffset);
+  if (sp.hasUnknownInt32BeforeGuid) reader.skip(4);
+  if (sp.hasGuid) reader.skip(16);
+  if (sp.hasGenerations) {
+    const genCount = reader.readInt32();
+    for (let i = 0; i < genCount; i++) {
+      reader.skip(4 + 4);
+      if (sp.hasGenerationsGuid) reader.skip(16);
+      if (fileVersion >= 322) reader.skip(4);
+    }
+  }
+  if (sp.unknownBytesAfterGenerations > 0) reader.skip(sp.unknownBytesAfterGenerations);
+  if (sp.hasEngineVersion) reader.skip(4);
+  if (sp.hasCookerVersion) reader.skip(4);
+
+  return reader.position;
 }
 
 // ============================================================

@@ -1,7 +1,8 @@
 import * as fs from "fs";
 import * as path from "path";
 import { BinaryReader, BinaryWriter, Endianness } from "../core/binary";
-import { readUPKPackage, readUPKFromBuffer, UPKPackage, FObjectExport,
+import { readUPKPackage, readUPKFromBuffer, readUPKPackageSelective,
+         UPKPackage, FObjectExport,
          resolveName, resolveClassName, getExportPath } from "../core/packages/UPKPackage";
 import { PackageProfile, FByteBulkDataProfile, FTexture2DMipMapProfile } from "../core/packages/PackageProfile";
 import { readAllTextures, Texture2DData, readTexture2D } from "../core/texture/Texture2D";
@@ -12,6 +13,7 @@ import { FTextureEntry, getTextureEntrySize, getTextureTfcFullName } from "../co
 import { FMipEntry } from "../core/mapping/FMipEntry";
 import { CompressionFlag, BulkDataFlags } from "../core/types";
 import { decompress, compress } from "../core/compression";
+import { ChunkManager } from "../core/compression/ChunkManager";
 import { UPK_SIGNATURE_LE } from "../core/packages/Signature";
 
 /**
@@ -465,11 +467,13 @@ function buildPatchedTexture(
   texture: Texture2DData,
   textureEntry: FTextureEntry,
   localMipData: Buffer[] | null,
+  overrideSerialStart?: number,
+  overrideSerialSize?: number,
 ): Buffer {
   const profile = pkg.profile;
   const exportEntry = pkg.exports[texture.exportIndex - 1];
-  const serialStart = exportEntry.serialOffset;
-  const serialEnd = serialStart + exportEntry.serialSize;
+  const serialStart = overrideSerialStart ?? exportEntry.serialOffset;
+  const serialEnd = serialStart + (overrideSerialSize ?? exportEntry.serialSize);
 
   // 1. Read the netIndex (if present)
   dataReader.seek(serialStart);
@@ -665,6 +669,11 @@ function decompressChunkDataFromReader(
 /**
  * Apply texture updates to a single package file.
  *
+ * Uses block-level selective decompression for compressed packages:
+ * only the chunks containing matched Texture2D exports are decompressed
+ * and recompressed. Unmodified chunks are copied verbatim from the
+ * original file, drastically reducing memory usage.
+ *
  * @param packagePath Path to the UPK package file
  * @param textureEntries Texture entries from the mapping file
  * @param outputPath Output path (defaults to packagePath — overwrites)
@@ -677,8 +686,206 @@ export function updatePackageTextures(
   outputPath?: string,
   modTfcDir?: string,
 ): PackageUpdateResult | null {
-  // Read the package
-  const pkg = readUPKPackage(packagePath);
+  // Parse package selectively (header + tables only, no full decompression)
+  const { pkg, chunkMgr, headerEnd, fileBuffer, compressionFlagOffset } =
+    readUPKPackageSelective(packagePath);
+
+  // Uncompressed packages or FullyCompressed fallback — use legacy path
+  if (!chunkMgr) {
+    return updatePackageTexturesLegacy(pkg, textureEntries, outputPath, modTfcDir);
+  }
+
+  // Find Texture2D exports from parsed tables (no decompression needed)
+  const texture2DExports: { exp: FObjectExport; exportIndex: number }[] = [];
+  for (let i = 0; i < pkg.exports.length; i++) {
+    const exp = pkg.exports[i];
+    const className = resolveClassName(pkg, exp.classIndex);
+    if (className === "Texture2D") {
+      texture2DExports.push({ exp, exportIndex: i + 1 });
+    }
+  }
+
+  if (texture2DExports.length === 0) return null;
+
+  // For each Texture2D, selectively decompress its chunk, parse, and match
+  const matches: { texture: Texture2DData; entry: FTextureEntry; exportIndex: number }[] = [];
+
+  for (const { exp, exportIndex } of texture2DExports) {
+    // Create a reader scoped to this export's serial data
+    const exportReader = chunkMgr.createReaderForRange(exp.serialOffset, exp.serialSize);
+
+    // readTexture2D expects the reader positioned at serialOffset, but our reader
+    // starts at 0 (scoped to the export). Create a wrapper pkg with adjusted offset.
+    const adjustedExport: FObjectExport = {
+      ...exp,
+      serialOffset: 0, // reader starts at the export's data
+    };
+
+    let texture: Texture2DData;
+    try {
+      texture = readTexture2D(exportReader, pkg, adjustedExport, exportIndex);
+    } catch {
+      continue; // Skip unparseable textures
+    }
+
+    // Try to match against mapping entries
+    for (const entry of textureEntries) {
+      const matched = matchTextureEntry([texture], entry);
+      if (matched) {
+        matches.push({ texture, entry, exportIndex });
+        break;
+      }
+    }
+  }
+
+  if (matches.length === 0) return null;
+
+  // Sort patches by serial offset (process in order)
+  const sortedMatches = matches.sort(
+    (a, b) => pkg.exports[a.exportIndex - 1].serialOffset - pkg.exports[b.exportIndex - 1].serialOffset,
+  );
+
+  // Build patched data for each match and apply via ChunkManager.
+  // Track original offset/size and new size for export table updates.
+  type PatchRecord = {
+    exportIndex: number;
+    originalOffset: number;
+    originalSize: number;
+    newSize: number;
+  };
+  const patchRecords: PatchRecord[] = [];
+  let accumulatedDelta = 0;
+
+  for (const { texture, entry, exportIndex } of sortedMatches) {
+    const exp = pkg.exports[exportIndex - 1];
+
+    // Re-read the export for patching (need a fresh reader at the current shifted offset)
+    const currentOffset = exp.serialOffset + accumulatedDelta;
+    const patchReader = chunkMgr.createReaderForRange(currentOffset, exp.serialSize);
+
+    // Load local mip data if needed
+    let localMipData: Buffer[] | null = null;
+    if (entry.localMipCount > 0 && modTfcDir) {
+      localMipData = loadLocalMipData(entry, modTfcDir);
+    }
+
+    // Reader is scoped to the export (starts at 0), so override serial start/size
+    const patchedData = buildPatchedTexture(
+      patchReader, pkg, texture, entry, localMipData,
+      0, exp.serialSize,
+    );
+
+    patchRecords.push({
+      exportIndex,
+      originalOffset: exp.serialOffset,
+      originalSize: exp.serialSize,
+      newSize: patchedData.length,
+    });
+
+    // Apply patch to chunk at the current (shifted) offset
+    const delta = chunkMgr.patchChunkBytes(currentOffset, exp.serialSize, patchedData);
+    accumulatedDelta += delta;
+  }
+
+  // Update export table entries in the header buffer
+  // The header is uncompressed — we patch it directly
+  const chunkTableSize = pkg.summary.compressionChunks.length * 16;
+  const headerBufferEnd = Math.max(headerEnd, compressionFlagOffset + 8 + chunkTableSize + 64);
+  const headerBuffer = Buffer.from(fileBuffer.subarray(0, headerBufferEnd));
+
+  // Rebuild export table: compute final offsets using recorded patch sizes
+  // Uses ChunkManager to write — handles export table entries in both
+  // header region and compressed chunks (common in Dishonored packages).
+  updateExportTableSelective(headerBuffer, pkg, patchRecords, chunkMgr);
+
+  // Build output with ChunkManager (only recompresses modified chunks)
+  const outputBuffer = chunkMgr.buildOutput(headerBuffer, compressionFlagOffset);
+
+  const outPath = outputPath ?? packagePath;
+  fs.writeFileSync(outPath, outputBuffer);
+
+  return {
+    packagePath: outPath,
+    texturesUpdated: matches.length,
+    updatedTextureNames: matches.map(m => m.texture.objectName),
+    originalSize: fileBuffer.length,
+    patchedSize: outputBuffer.length,
+  };
+}
+
+/**
+ * Update export table entries in the header for block-level patching.
+ *
+ * After chunk-level patching, exports in modified chunks may have shifted.
+ * We recompute serialOffset for all exports based on accumulated deltas
+ * from the pre-recorded patch sizes.
+ *
+ * Export table entries may be in the uncompressed header region OR in
+ * compressed chunks (Dishonored packages often have tables in chunks).
+ * Uses ChunkManager's write methods to handle both cases transparently.
+ */
+function updateExportTableSelective(
+  headerBuffer: Buffer,
+  pkg: UPKPackage,
+  patchRecords: { exportIndex: number; originalOffset: number; originalSize: number; newSize: number }[],
+  chunkMgr: ChunkManager,
+): void {
+  const profile = pkg.profile;
+
+  // patchRecords are already sorted by originalOffset (from sortedMatches)
+  // Build cumulative shift table
+  const shiftPoints: { afterOffset: number; cumulativeDelta: number }[] = [];
+  let cumDelta = 0;
+  for (const p of patchRecords) {
+    cumDelta += p.newSize - p.originalSize;
+    shiftPoints.push({
+      afterOffset: p.originalOffset + p.originalSize,
+      cumulativeDelta: cumDelta,
+    });
+  }
+
+  // Build a lookup for patched exports
+  const patchByExportIndex = new Map(patchRecords.map(p => [p.exportIndex, p]));
+
+  // Update each export's serialOffset and serialSize
+  // Uses ChunkManager to write — handles both header and chunk regions
+  for (let i = 0; i < pkg.exports.length; i++) {
+    const exp = pkg.exports[i];
+
+    // Compute shift: sum of deltas from all patches whose objects end BEFORE
+    // this export's original serial offset
+    let shift = 0;
+    for (const sp of shiftPoints) {
+      if (exp.serialOffset >= sp.afterOffset) {
+        shift = sp.cumulativeDelta;
+      }
+    }
+
+    // Check if this export was patched (its size changed)
+    const patchInfo = patchByExportIndex.get(i + 1);
+    const newSize = patchInfo ? patchInfo.newSize : exp.serialSize;
+    const newOffset = exp.serialOffset + shift;
+
+    if (profile.objectExport.hasSerialDataOffset64) {
+      chunkMgr.writeBigInt64LE(exp.serialOffsetFilePos, BigInt(newOffset), headerBuffer);
+      chunkMgr.writeBigInt64LE(exp.serialSizeFilePos, BigInt(newSize), headerBuffer);
+    } else {
+      chunkMgr.writeInt32LE(exp.serialOffsetFilePos, newOffset, headerBuffer);
+      chunkMgr.writeInt32LE(exp.serialSizeFilePos, newSize, headerBuffer);
+    }
+  }
+}
+
+/**
+ * Legacy path for uncompressed packages or FullyCompressed fallback.
+ * Uses the original full-decompression approach.
+ */
+function updatePackageTexturesLegacy(
+  pkg: UPKPackage,
+  textureEntries: FTextureEntry[],
+  outputPath?: string,
+  modTfcDir?: string,
+): PackageUpdateResult | null {
   const dataReader = pkg.dataReader;
 
   // Find all Texture2D exports
@@ -696,13 +903,10 @@ export function updatePackageTextures(
 
   if (matches.length === 0) return null;
 
-  // Build the patched data for the decompressed package buffer
-  // We work on the decompressed buffer, modifying object data in-place or with shifting
   const originalBuffer = dataReader.getBuffer();
-  const patchedData = new Map<number, Buffer>(); // exportIndex → patched serialized data
+  const patchedData = new Map<number, Buffer>();
 
   for (const { texture, entry } of matches) {
-    // Load local mip data from mod TFC files if available
     let localMipData: Buffer[] | null = null;
     if (entry.localMipCount > 0 && modTfcDir) {
       localMipData = loadLocalMipData(entry, modTfcDir);
@@ -711,8 +915,6 @@ export function updatePackageTextures(
     patchedData.set(texture.exportIndex, patched);
   }
 
-  // Compute the size deltas and build the output buffer
-  // Sort by serial offset to process in order
   const sortedPatches = [...patchedData.entries()]
     .map(([exportIndex, data]) => {
       const exp = pkg.exports[exportIndex - 1];
@@ -720,59 +922,44 @@ export function updatePackageTextures(
     })
     .sort((a, b) => a.originalOffset - b.originalOffset);
 
-  // Calculate total size change
   let totalDelta = 0;
   for (const patch of sortedPatches) {
     totalDelta += patch.data.length - patch.originalSize;
   }
 
-  // Build new buffer with shifted data
   const newBufferSize = originalBuffer.length + totalDelta;
   const newBuffer = Buffer.alloc(newBufferSize);
   let srcPos = 0;
   let dstPos = 0;
-  let accumulatedDelta = 0;
 
-  // Copy data in chunks, replacing patched objects
   for (const patch of sortedPatches) {
-    // Copy unchanged data before this object
     const preBytes = patch.originalOffset - srcPos;
     if (preBytes > 0) {
       originalBuffer.copy(newBuffer, dstPos, srcPos, srcPos + preBytes);
       dstPos += preBytes;
       srcPos += preBytes;
     }
-
-    // Write patched data
     patch.data.copy(newBuffer, dstPos);
     dstPos += patch.data.length;
     srcPos += patch.originalSize;
-
-    // Track the delta for offset updates
-    accumulatedDelta += patch.data.length - patch.originalSize;
   }
 
-  // Copy remaining data after all patches
   if (srcPos < originalBuffer.length) {
     originalBuffer.copy(newBuffer, dstPos, srcPos);
   }
 
-  // Update export table entries (serial offset and size)
-  // The export table is at a known offset in the buffer — we need to update it
   updateExportTable(newBuffer, pkg, sortedPatches);
 
-  // Recompress if the original package was compressed
-  const outputBuffer = recompressPackage(newBuffer, pkg);
-
-  const outPath = outputPath ?? packagePath;
-  fs.writeFileSync(outPath, outputBuffer);
+  // For uncompressed packages, no recompression needed — write directly
+  const outPath = outputPath ?? pkg.filePath;
+  fs.writeFileSync(outPath, newBuffer);
 
   return {
     packagePath: outPath,
     texturesUpdated: matches.length,
     updatedTextureNames: matches.map(m => m.texture.objectName),
     originalSize: originalBuffer.length,
-    patchedSize: outputBuffer.length,
+    patchedSize: newBuffer.length,
   };
 }
 

@@ -62,16 +62,14 @@ export function copyTFCFiles(
     }
   }
 
-  // Copy the files
+  // Copy the files (overwrite if destination exists)
   const copiedFiles: string[] = [];
   for (let idx = minIndex; idx <= maxIndex; idx++) {
     const srcFile = getTFCPath(sourcePath, tfcName, idx, tfcExtension);
     const dstFile = getTFCPath(destPath, tfcName, idx + shiftOffset, tfcExtension);
 
-    if (!fs.existsSync(dstFile)) {
-      fs.copyFileSync(srcFile, dstFile);
-      copiedFiles.push(dstFile);
-    }
+    fs.copyFileSync(srcFile, dstFile);
+    copiedFiles.push(dstFile);
   }
 
   return { shiftOffset, copiedFiles };
