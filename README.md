@@ -26,6 +26,11 @@ A fork of [Nexus Mods' Vortex](https://github.com/Nexus-Mods/Vortex) mod manager
 - TFC archive copying, TOC patching, game executable hash-check bypass, INI patching
 - **Status**: Works for BioShock, Dishonored support is experimental (game crashes in some configurations). Needs more testing.
 
+### Witcher 3 Script Merger (Linux)
+- Bundles [tw3-script-merger](https://github.com/Aelto/tw3-script-merger) by [Aelto](https://github.com/Aelto) — a Rust-based CLI 3-way script merger for The Witcher 3, replacing the Windows-only WitcherScriptMerger.exe
+- Conflict resolution GUI built into Vortex: auto-resolves simple conflicts, shows A/B/C selection dialog for true conflicts
+- Automatically installed alongside the game extension — no manual setup required
+
 ### Bug Fixes
 - **Game discovery**: Fixed `GameStoreHelper.find()` silently dropping Steam game results due to a `priority` check that excluded entries without an explicit priority field
 - **Save game parser**: Fixed `unsigned long` type mismatch in the Gamebryo save parser C++ module — on 64-bit Linux, `unsigned long` is 8 bytes (vs 4 on Windows), causing all saves to appear as corrupted
@@ -45,6 +50,7 @@ A fork of [Nexus Mods' Vortex](https://github.com/Nexus-Mods/Vortex) mod manager
 - Horizon Zero Dawn (Steam/Proton)
 - BioShock Remastered (Steam/Proton) — texture mods via tfc-tools
 - Dishonored (Heroic/Wine) — texture mods experimental (NOT WORKING RELIABLY)
+- The Witcher 3 (Steam/Proton) — script merging via tw3-script-merger
 - A Hat in Time (Steam/Proton)
 
 ## Installation
@@ -79,6 +85,12 @@ pnpm run start
 ## Contributing
 
 Fixes and contributions are welcome! If you run into issues, please open an issue and include your `vortex.log` file (found in `~/.config/@vortex/main/vortex.log`). I'm open to having an AppImage created for it (would make modding games on SteamOS easier, but I'm running into issues of using WebPack vs TSC... TSC (running it thorugh pnpm run start) works fine... Lot of bugs when trying to create an AppImage.
+
+## Acknowledgements
+
+- [Nexus Mods](https://github.com/Nexus-Mods) — Vortex mod manager (upstream)
+- [Aelto](https://github.com/Aelto) — [tw3-script-merger](https://github.com/Aelto/tw3-script-merger), the Rust-based CLI script merger for The Witcher 3 bundled in this fork
+- [Heroic Games Launcher](https://heroicgameslauncher.com/) — Linux game launcher whose configuration is read by the Heroic game store extension
 
 ## Upstream
 
