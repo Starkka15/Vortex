@@ -44,7 +44,7 @@ A fork of [Nexus Mods' Vortex](https://github.com/Nexus-Mods/Vortex) mod manager
 - Prey 2017 (Steam/Proton)
 - Horizon Zero Dawn (Steam/Proton)
 - BioShock Remastered (Steam/Proton) — texture mods via tfc-tools
-- Dishonored (Heroic/Wine) — texture mods experimental
+- Dishonored (Heroic/Wine) — texture mods experimental (NOT WORKING RELIABLY)
 - A Hat in Time (Steam/Proton)
 
 ## Installation
