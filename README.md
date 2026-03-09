@@ -2,6 +2,8 @@
 
 A fork of [Nexus Mods' Vortex](https://github.com/Nexus-Mods/Vortex) mod manager ported to run natively on Linux. This project aims to bring full Vortex functionality to Linux users, including Proton/Wine-aware game discovery, save management, and mod deployment for Steam games running through Proton.
 
+> **This is an experimental build.** It has been tested on a single system (Ubuntu Linux) with a limited set of games. What works for me may not work for you — different distros, desktop environments, filesystem layouts, and Proton versions can all introduce issues. Bug reports are welcome, but please go in with the expectation that things may break.
+
 ## What's Different from Upstream
 
 ### Linux Native Support
