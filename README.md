@@ -19,6 +19,13 @@ A fork of [Nexus Mods' Vortex](https://github.com/Nexus-Mods/Vortex) mod manager
 - Reads Wine/Proton prefix paths from Heroic's per-game configuration
 - Supports Flatpak, native, and Snap Heroic installations
 
+### TFC Texture Mod Patching (tfc-tools)
+- Bundled extension that automatically patches UE3 game packages with TFC texture mods on deploy
+- Supports BioShock Remastered, BioShock 2, BioShock Infinite, and Dishonored
+- Block-level selective compression: only decompresses/recompresses chunks containing modified textures, reducing memory usage for 32-bit UE3 games
+- TFC archive copying, TOC patching, game executable hash-check bypass, INI patching
+- **Status**: Works for BioShock, Dishonored support is experimental (game crashes in some configurations). Needs more testing.
+
 ### Bug Fixes
 - **Game discovery**: Fixed `GameStoreHelper.find()` silently dropping Steam game results due to a `priority` check that excluded entries without an explicit priority field
 - **Save game parser**: Fixed `unsigned long` type mismatch in the Gamebryo save parser C++ module — on 64-bit Linux, `unsigned long` is 8 bytes (vs 4 on Windows), causing all saves to appear as corrupted
@@ -36,7 +43,8 @@ A fork of [Nexus Mods' Vortex](https://github.com/Nexus-Mods/Vortex) mod manager
 - Baldur's Gate 3 (Steam/Proton)
 - Prey 2017 (Steam/Proton)
 - Horizon Zero Dawn (Steam/Proton)
-- BioShock Remastered (Steam/Proton)
+- BioShock Remastered (Steam/Proton) — texture mods via tfc-tools
+- Dishonored (Heroic/Wine) — texture mods experimental
 - A Hat in Time (Steam/Proton)
 
 ## Installation
