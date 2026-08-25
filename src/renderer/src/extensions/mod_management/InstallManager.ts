@@ -244,6 +244,65 @@ class InstructionGroups {
   public enableallplugins: IInstruction[] = [];
 }
 
+/**
+ * Rebuild the directory structure of archives that store Windows-style path separators.
+ *
+ * 7-Zip only treats "\\" as a path separator on Windows; everywhere else it is an ordinary
+ * filename character. An archive whose entries are recorded as "Tool\\icons\\foo.png" therefore
+ * extracts to a single file literally named "Tool\\icons\\foo.png" rather than to
+ * "Tool/icons/foo.png", so the mod arrives as a flat heap of oddly named files: installers
+ * that key off directory layout mis-detect it, and the names reach the game directory intact.
+ * Observed with several tool archives (SSEEdit, Bethini Pie, Cathedral Assets Optimizer),
+ * and libloot rejects the resulting plugin names outright because a lone backslash is an
+ * invalid escape when it builds a regex from them.
+ *
+ * No-op on Windows, where 7-Zip has already split these itself.
+ */
+async function repairWindowsSeparators(basePath: string): Promise<number> {
+  if (process.platform === "win32") return 0;
+
+  const offenders: string[] = [];
+  await walk(basePath, (iterPath, stats) => {
+    if (stats.isFile() && path.basename(iterPath).includes("\\")) offenders.push(iterPath);
+    return Promise.resolve();
+  });
+
+  let repaired = 0;
+  for (const filePath of offenders) {
+    const dirName = path.dirname(filePath);
+    // Only the basename is suspect; parent segments were split correctly by 7-Zip.
+    const segments = path
+      .basename(filePath)
+      .split("\\")
+      .filter((seg) => seg.length > 0);
+    if (segments.length < 2) continue;
+
+    const target = path.join(dirName, ...segments);
+    try {
+      await fs.ensureDirAsync(path.dirname(target));
+      await fs.renameAsync(filePath, target);
+      repaired += 1;
+    } catch (error) {
+      // A single unmovable file shouldn't fail the whole install -- the archive is still
+      // usable, just awkwardly laid out, which is the behaviour before this repair existed.
+      log("warn", "failed to repair windows-style path in archive", {
+        filePath,
+        error: error instanceof Error ? error.message : "unknown error",
+      });
+    }
+  }
+
+  if (repaired > 0) {
+    log("info", "repaired windows-style path separators in extracted archive", {
+      basePath,
+      repaired,
+      total: offenders.length,
+    });
+  }
+
+  return repaired;
+}
+
 async function buildFileList(basePath: string): Promise<string[]> {
   const fileList: string[] = [];
   await walk(basePath, (iterPath, stats) => {
@@ -1108,6 +1167,7 @@ class InstallManager {
         }
       })
       .then(async () => {
+        await repairWindowsSeparators(tempPath);
         fileList = await buildFileList(tempPath);
         if (truthy(extractList) && extractList.length > 0) {
           return makeListInstaller(extractList, tempPath);
