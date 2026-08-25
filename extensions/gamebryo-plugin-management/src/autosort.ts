@@ -5,7 +5,7 @@ import Bluebird from "bluebird";
 import { pl } from "date-fns/locale";
 import getVersion from "exe-version";
 import i18next from "i18next";
-import { LootAsync, Message, PluginMetadata } from "loot";
+import type { LootAsync as LootAsyncApi, Message, PluginMetadata } from "loot";
 import {} from "redux-thunk";
 
 /* eslint-disable */
@@ -21,6 +21,20 @@ import { downloadMasterlist, downloadPrelude } from "./util/masterlist";
 import toPluginId from "./util/toPluginId";
 
 const MAX_RESTARTS = 3;
+
+// node-loot links libloot.dll and only builds on Windows, which is why this extension used to be
+// skipped entirely on other platforms. Elsewhere, use the adapter backed by libloot's own Node
+// binding -- it presents the same node-style callback API, so everything below is unchanged.
+/* eslint-disable @typescript-eslint/no-var-requires */
+const LootAsync =
+  process.platform === "win32"
+    ? require("loot").LootAsync
+    : require("./util/liblootAdapter").LootAsync;
+/* eslint-enable @typescript-eslint/no-var-requires */
+
+// A type and a value may share a name; the adapter implements the same interface, so the
+// existing `LootAsync` type annotations below keep working unchanged.
+type LootAsync = LootAsyncApi;
 
 const LootProm: any = Bluebird.promisifyAll(LootAsync);
 
